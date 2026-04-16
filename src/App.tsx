@@ -184,7 +184,7 @@ export default function App() {
   const [runtimeInfo, setRuntimeInfo] = useState<{
     runtimeDir: string;
     userDataPath: string;
-    configPath: string;
+    settingsStorage: string;
     dbPath: string;
     os: string;
   } | null>(null);
@@ -202,6 +202,8 @@ export default function App() {
   const fitMapRef = useRef<Map<number, FitAddon>>(new Map());
   const pausedByScrollRef = useRef<Map<number, boolean>>(new Map());
   const pendingOutputRef = useRef<Map<number, string>>(new Map());
+  const disconnectedByTabRef = useRef<Map<number, boolean>>(new Map());
+  const reconnectingTabRef = useRef<Set<number>>(new Set());
   const dialogResolverRef = useRef<((value: any) => void) | null>(null);
   const sidebarWidthRef = useRef(300);
   const sidebarResizingRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -210,6 +212,9 @@ export default function App() {
   const cursorStyleMenuRef = useRef<HTMLDivElement>(null);
   const sftpInternalDragRef = useRef(false);
   const activeSessionIdRef = useRef<number | null>(null);
+  const tabsRef = useRef<Tab[]>([]);
+  const sessionsRef = useRef<Session[]>([]);
+  const settingsRef = useRef<Settings | null>(null);
 
   const nextTabIdRef = useRef(1);
   const activeTab = useMemo(
@@ -309,6 +314,15 @@ export default function App() {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   useEffect(() => {
     sidebarWidthRef.current = sidebarWidth;
@@ -536,6 +550,12 @@ export default function App() {
       term.loadAddon(fit);
       term.loadAddon(new WebLinksAddon());
       term.onData(async (input) => {
+        if (disconnectedByTabRef.current.get(sessionId)) {
+          if (input.toLowerCase() === 'r') {
+            void reconnectTab(sessionId);
+          }
+          return;
+        }
         syncPauseStateWithViewport(sessionId, term);
         const pausedByViewport = !isAtBottom(term);
         const paused = (pausedByScrollRef.current.get(sessionId) || false) || pausedByViewport;
@@ -563,6 +583,7 @@ export default function App() {
       terminalMapRef.current.set(sessionId, term);
       fitMapRef.current.set(sessionId, fit);
       pausedByScrollRef.current.set(sessionId, false);
+      disconnectedByTabRef.current.set(sessionId, false);
     }
 
     term.options.fontFamily = localSettings.theme.terminalFontFamily || 'Consolas';
@@ -595,6 +616,79 @@ export default function App() {
     setTimeout(() => fitTerminal(sessionId), 220);
   };
 
+  const reconnectTab = async (tabId: number) => {
+    if (reconnectingTabRef.current.has(tabId)) return;
+    const tab = tabsRef.current.find((it) => it.id === tabId);
+    if (!tab) return;
+    const session = sessionsRef.current.find((it) => it.id === tab.sessionId);
+    if (!session) return;
+    const term = terminalMapRef.current.get(tabId);
+    reconnectingTabRef.current.add(tabId);
+    term?.writeln('\r\n[检测到断开，正在重连...]');
+    try {
+      await window.terminalApi.sshConnect({ sessionId: session.id, connectionId: tabId });
+      disconnectedByTabRef.current.set(tabId, false);
+      pausedByScrollRef.current.set(tabId, false);
+      if (settingsRef.current) attachTerminal(tabId, settingsRef.current);
+      if (activeSessionIdRef.current === tabId) setPausedOutput(false);
+      term?.writeln('\r\n[重连成功]');
+      return;
+    } catch (error) {
+      const message = String(error);
+      if (!isAuthError(message)) {
+        term?.writeln(`\r\n[重连失败] ${message}`);
+        disconnectedByTabRef.current.set(tabId, true);
+        return;
+      }
+      let retryCount = 0;
+      while (true) {
+        const retryPassword = await askPassword(
+          `会话 ${session.name} 认证失败。\n已重试 ${retryCount} 次，请输入密码继续（取消可终止重连）。`,
+          '重连认证',
+        );
+        if (!retryPassword) {
+          term?.writeln(`\r\n[重连已取消，累计重试 ${retryCount} 次]`);
+          disconnectedByTabRef.current.set(tabId, true);
+          return;
+        }
+        retryCount += 1;
+        term?.writeln(`\r\n[正在进行第 ${retryCount} 次重试...]`);
+        try {
+          await window.terminalApi.sshConnect({
+            sessionId: session.id,
+            connectionId: tabId,
+            password: retryPassword,
+            savePassword: true,
+          });
+          await window.terminalApi.updateSession({
+            ...session,
+            password: retryPassword,
+            remember_password: 1,
+          });
+          setSessions((prev) =>
+            prev.map((it) => (it.id === session.id ? { ...it, password: retryPassword, remember_password: 1 } : it)),
+          );
+          disconnectedByTabRef.current.set(tabId, false);
+          pausedByScrollRef.current.set(tabId, false);
+          if (settingsRef.current) attachTerminal(tabId, settingsRef.current);
+          if (activeSessionIdRef.current === tabId) setPausedOutput(false);
+          term?.writeln(`\r\n[重连成功，累计重试 ${retryCount} 次]`);
+          return;
+        } catch (retryError) {
+          const retryMessage = String(retryError);
+          if (!isAuthError(retryMessage)) {
+            term?.writeln(`\r\n[重连失败] ${retryMessage}`);
+            disconnectedByTabRef.current.set(tabId, true);
+            return;
+          }
+          term?.writeln(`\r\n[第 ${retryCount} 次重试认证失败]`);
+        }
+      }
+    } finally {
+      reconnectingTabRef.current.delete(tabId);
+    }
+  };
+
   const connectSession = async (session: Session, forceNew = false) => {
     if (!forceNew) {
       const existing = tabs.find((it) => it.sessionId === session.id);
@@ -608,6 +702,7 @@ export default function App() {
     setTabs((prev) => [...prev, { id: tabId, sessionId: session.id, title: session.name }]);
     try {
       await window.terminalApi.sshConnect({ sessionId: session.id, connectionId: tabId });
+      disconnectedByTabRef.current.set(tabId, false);
       if (settings) attachTerminal(tabId, settings);
       setActiveSessionId(tabId);
     } catch (error) {
@@ -618,40 +713,55 @@ export default function App() {
         await showAlert(message, '连接失败');
         return;
       }
-      const retryPassword = await askPassword(`会话 ${session.name} 认证失败，请输入密码重试`);
-      if (!retryPassword) {
-        setTabs((prev) => prev.filter((it) => it.id !== tabId));
-        if (activeSessionId === tabId) setActiveSessionId(null);
-        await showAlert(message, '连接失败');
-        return;
-      }
-      try {
-        await window.terminalApi.sshConnect({
-          sessionId: session.id,
-          connectionId: tabId,
-          password: retryPassword,
-          savePassword: true,
-        });
-        await window.terminalApi.updateSession({
-          ...session,
-          password: retryPassword,
-          remember_password: 1,
-        });
-        setSessions((prev) =>
-          prev.map((it) => (it.id === session.id ? { ...it, password: retryPassword, remember_password: 1 } : it)),
+      let retryCount = 0;
+      while (true) {
+        const retryPassword = await askPassword(
+          `会话 ${session.name} 认证失败。\n已重试 ${retryCount} 次，请输入密码继续（取消可终止连接）。`,
+          '连接认证',
         );
-        if (settings) attachTerminal(tabId, settings);
-        setActiveSessionId(tabId);
-      } catch (retryError) {
-        setTabs((prev) => prev.filter((it) => it.id !== tabId));
-        if (activeSessionId === tabId) setActiveSessionId(null);
-        await showAlert(String(retryError), '连接失败');
+        if (!retryPassword) {
+          setTabs((prev) => prev.filter((it) => it.id !== tabId));
+          if (activeSessionId === tabId) setActiveSessionId(null);
+          await showAlert(`已取消连接，累计重试 ${retryCount} 次。`, '连接已取消');
+          return;
+        }
+        retryCount += 1;
+        try {
+          await window.terminalApi.sshConnect({
+            sessionId: session.id,
+            connectionId: tabId,
+            password: retryPassword,
+            savePassword: true,
+          });
+          disconnectedByTabRef.current.set(tabId, false);
+          await window.terminalApi.updateSession({
+            ...session,
+            password: retryPassword,
+            remember_password: 1,
+          });
+          setSessions((prev) =>
+            prev.map((it) => (it.id === session.id ? { ...it, password: retryPassword, remember_password: 1 } : it)),
+          );
+          if (settings) attachTerminal(tabId, settings);
+          setActiveSessionId(tabId);
+          return;
+        } catch (retryError) {
+          const retryMessage = String(retryError);
+          if (!isAuthError(retryMessage)) {
+            setTabs((prev) => prev.filter((it) => it.id !== tabId));
+            if (activeSessionId === tabId) setActiveSessionId(null);
+            await showAlert(retryMessage, '连接失败');
+            return;
+          }
+        }
       }
     }
   };
 
   const closeTab = async (tabId: number) => {
     await window.terminalApi.sshDisconnect(tabId).catch(() => null);
+    reconnectingTabRef.current.delete(tabId);
+    disconnectedByTabRef.current.delete(tabId);
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (activeSessionId === tabId) {
@@ -785,8 +895,10 @@ export default function App() {
       term.write(cleanData);
     });
     const unClosed = window.terminalApi.onSshClosed(({ sessionId }) => {
+      disconnectedByTabRef.current.set(sessionId, true);
+      reconnectingTabRef.current.delete(sessionId);
       const term = terminalMapRef.current.get(sessionId);
-      term?.writeln('\r\n[连接已关闭]');
+      term?.writeln('\r\n[连接已关闭，按 R 重连]');
     });
     const unMetrics = window.terminalApi.onMetrics((payload) => {
       setMetrics(payload);
@@ -1723,7 +1835,7 @@ export default function App() {
               {settingsTab === 'appearance' && (
                 <>
                   <div className="setting-row">
-                    <span>背景色</span>
+                    <span>会话背景色</span>
                     <input
                       type="color"
                       value={settingsDraft.theme.backgroundColor}
@@ -1736,7 +1848,7 @@ export default function App() {
                     />
                   </div>
                   <div className="setting-row">
-                    <span>字体色</span>
+                    <span>会话字体色</span>
                     <input
                       type="color"
                       value={settingsDraft.theme.foregroundColor}
@@ -1976,7 +2088,7 @@ export default function App() {
                 <div className="runtime-note">
                   <div className="runtime-title">运行时路径</div>
                   <div>userData: {runtimeInfo?.userDataPath}</div>
-                  <div>配置文件: {runtimeInfo?.configPath}</div>
+                  <div>配置存储: {runtimeInfo?.settingsStorage}</div>
                   <div>数据库文件: {runtimeInfo?.dbPath}</div>
                 </div>
               )}

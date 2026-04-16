@@ -667,8 +667,7 @@ body,
 }
 
 .settings-modal {
-  min-height: min(520px, 78vh);
-  max-height: min(86vh, 760px);
+  height: min(700px, 86vh);
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
 }

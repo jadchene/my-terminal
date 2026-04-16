@@ -168,7 +168,7 @@ declare global {
       onMetrics: (cb: (metrics: Metrics) => void) => () => void;
       getPathForDroppedFile: (file: File) => string;
       pickDirectory: (defaultPath?: string) => Promise<string | null>;
-      getRuntimePaths: () => Promise<{ runtimeDir: string; userDataPath: string; configPath: string; dbPath: string; os: string }>;
+      getRuntimePaths: () => Promise<{ runtimeDir: string; userDataPath: string; settingsStorage: string; dbPath: string; os: string }>;
     };
   }
 }

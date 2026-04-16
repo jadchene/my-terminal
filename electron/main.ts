@@ -106,7 +106,6 @@ const devAppRoot = path.resolve(__dirname, '..', '..');
 const appRoot = isDev ? devAppRoot : app.getAppPath();
 const runtimeDir = isDev ? devAppRoot : path.dirname(process.execPath);
 const userDataPath = path.join(runtimeDir, 'user-data');
-const configPath = path.join(runtimeDir, 'config.json');
 const dbPath = path.join(runtimeDir, 'app.db');
 const windowStatePath = path.join(userDataPath, 'window-state.json');
 const preloadCandidates = [
@@ -131,11 +130,12 @@ const pendingPwdCaptureMap = new Map<number, PendingPwdCapture>();
 const lastKnownCwdMap = new Map<number, string>();
 
 let mainWindow: BrowserWindow | null = null;
-let settingsWatcher: fs.FSWatcher | null = null;
 let metricsTimer: NodeJS.Timeout | null = null;
 let metricsCollecting = false;
 let metricsSessionId: number | null = null;
 let metricsInactiveSent = false;
+const SETTINGS_KEY = 'app_settings';
+let settingsCache: AppSettings = defaultSettings;
 
 type RemoteMetricsSnapshot = {
   cpuTotal: number;
@@ -543,30 +543,42 @@ async function resolveRemotePath(client: any, input: string): Promise<string> {
 }
 
 function readSettings(): AppSettings {
+  return settingsCache;
+}
+
+function normalizeSettings(parsed: any): AppSettings {
+  return {
+    ...defaultSettings,
+    ...(parsed || {}),
+    theme: { ...defaultSettings.theme, ...((parsed && parsed.theme) || {}) },
+    behavior: { ...defaultSettings.behavior, ...((parsed && parsed.behavior) || {}) },
+    ui: { ...defaultSettings.ui, ...((parsed && parsed.ui) || {}) },
+  };
+}
+
+async function loadSettingsFromDb(): Promise<AppSettings> {
+  const row = await get<{ value: string }>('SELECT value FROM app_setting WHERE key = ?', [SETTINGS_KEY]);
+  if (!row?.value) return defaultSettings;
   try {
-    const raw = fs.readFileSync(configPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    return {
-      ...defaultSettings,
-      ...parsed,
-      theme: { ...defaultSettings.theme, ...(parsed.theme || {}) },
-      behavior: { ...defaultSettings.behavior, ...(parsed.behavior || {}) },
-      ui: { ...defaultSettings.ui, ...(parsed.ui || {}) },
-    };
+    const parsed = JSON.parse(row.value);
+    return normalizeSettings(parsed);
   } catch {
     return defaultSettings;
   }
 }
 
-function saveSettings(nextSettings: AppSettings) {
-  fs.writeFileSync(configPath, JSON.stringify(nextSettings, null, 2), 'utf8');
+async function saveSettings(nextSettings: AppSettings) {
+  const normalized = normalizeSettings(nextSettings);
+  settingsCache = normalized;
+  await run(
+    `INSERT INTO app_setting(key, value)
+     VALUES(?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [SETTINGS_KEY, JSON.stringify(normalized)],
+  );
 }
 
 async function initStorage() {
-  if (!fs.existsSync(configPath)) {
-    saveSettings(defaultSettings);
-  }
-
   await run(
     `CREATE TABLE IF NOT EXISTS session_folder (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -587,6 +599,22 @@ async function initStorage() {
       default_session INTEGER DEFAULT 0
     )`,
   );
+  await run(
+    `CREATE TABLE IF NOT EXISTS app_setting (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`,
+  );
+  const existing = await get<{ value: string }>('SELECT value FROM app_setting WHERE key = ?', [SETTINGS_KEY]);
+  if (existing?.value) {
+    try {
+      settingsCache = normalizeSettings(JSON.parse(existing.value));
+    } catch {
+      await saveSettings(defaultSettings);
+    }
+    return;
+  }
+  await saveSettings(defaultSettings);
 }
 
 async function loadSession(sessionId: number): Promise<Session> {
@@ -917,13 +945,6 @@ function createWindow() {
   Menu.setApplicationMenu(null);
 }
 
-function watchSettings() {
-  settingsWatcher?.close();
-  settingsWatcher = fs.watch(configPath, () => {
-    safeSend('settings:changed', readSettings());
-  });
-}
-
 function subscribeMetrics() {
   metricsTimer = setInterval(async () => {
     if (!mainWindow || mainWindow.isDestroyed() || metricsCollecting) return;
@@ -1195,7 +1216,8 @@ function registerIpc() {
       behavior: { ...current.behavior, ...(partial.behavior || {}) },
       ui: { ...current.ui, ...(partial.ui || {}) },
     };
-    saveSettings(merged);
+    await saveSettings(merged);
+    safeSend('settings:changed', merged);
     return merged;
   });
 
@@ -1542,14 +1564,19 @@ function registerIpc() {
     return picked.filePaths[0];
   });
 
-  ipcMain.handle('app:runtime-paths', async () => ({ runtimeDir, userDataPath, configPath, dbPath, os: os.platform() }));
+  ipcMain.handle('app:runtime-paths', async () => ({
+    runtimeDir,
+    userDataPath,
+    settingsStorage: `sqlite:${dbPath}#app_setting.${SETTINGS_KEY}`,
+    dbPath,
+    os: os.platform(),
+  }));
 }
 
 app.whenReady().then(async () => {
   await initStorage();
   registerIpc();
   createWindow();
-  watchSettings();
   subscribeMetrics();
 
   app.on('activate', () => {
@@ -1562,7 +1589,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async () => {
-  settingsWatcher?.close();
   if (metricsTimer) clearInterval(metricsTimer);
 
   for (const [, state] of sshStateMap) state.client.end();
