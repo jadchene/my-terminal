@@ -1,37 +1,61 @@
 # My Terminal
 
-[English Version](README.md)
+[English](README.md) | [中文](README.zh-CN.md)
 
-基于 Electron 构建的 SSH 终端应用，集成了 SFTP 文件传输以及系统监控功能。
+基于 Electron + React 的桌面 SSH 终端，集成 SFTP 文件管理和远程系统指标查看。
 
-## 功能特性
+## 核心功能
 
-- **SSH 终端：** 采用 `xterm.js` 构建的全功能终端模拟器。
-- **SFTP 支持：** 使用 `ssh2-sftp-client` 实现便捷的文件传输。
-- **系统监控：** 内置系统状态监控与信息获取功能。
-- **本地存储：** 集成 SQLite3 实现安全的本地数据存储。
+- 基于 `xterm.js` 的 SSH 终端会话
+- SFTP 文件列表、上传、下载、批量传输、右键操作
+- 远程状态侧边栏（CPU / 内存 / 网络 / 磁盘 / GPU）
+- 会话树与目录管理，SQLite 本地持久化
+- 无边框纯黑风格界面，支持字体与颜色配置
 
 ## 技术栈
 
-- **框架：** Electron, React, Vite
-- **语言：** TypeScript
-- **终端：** xterm.js
-- **SSH/SFTP:** ssh2, ssh2-sftp-client
-- **数据库：** SQLite3
+- Electron
+- React + Vite
+- TypeScript
+- `ssh2` + `ssh2-sftp-client`
+- `xterm` 及扩展
+- SQLite3
 
-## 开发指南
+## 环境要求
+
+- Node.js 18+
+- npm 9+
+- Windows（当前打包目标）
+
+## 开发启动
 
 ```bash
-# 安装依赖
 npm install
-
-# 启动开发服务器
 npm run dev
+```
 
-# 构建应用
+## 构建
+
+```bash
 npm run build
 ```
 
-## 开源协议
+## 打包（Unpacked）
+
+```bash
+npm run pack:unpacked
+```
+
+输出目录：
+
+```text
+release/win-unpacked
+```
+
+## 版本
+
+当前发布版本：`1.0.0`
+
+## License
 
 MIT

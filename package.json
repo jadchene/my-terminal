@@ -9,6 +9,7 @@
     "dev:electron": "npm run build:electron && wait-on tcp:5173 && electron dist-electron/electron/main.js",
     "build": "vite build && npm run build:electron",
     "build:electron": "tsc -p tsconfig.electron.json",
+    "pack:unpacked": "npm run build && electron-builder --dir --win",
     "preview": "vite preview",
     "start": "npm run build:electron && electron dist-electron/electron/main.js"
   },
