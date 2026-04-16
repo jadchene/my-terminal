@@ -13,8 +13,22 @@
     "start": "npm run build:electron && electron dist-electron/electron/main.js"
   },
   "keywords": [],
-  "author": "",
+  "author": "jadchene",
   "license": "ISC",
+  "build": {
+    "appId": "com.myterminal.app",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
   "type": "commonjs",
   "dependencies": {
     "lucide-react": "^1.8.0",
