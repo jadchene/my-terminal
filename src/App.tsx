@@ -207,6 +207,7 @@ export default function App() {
   const sessionFolderMenuRef = useRef<HTMLDivElement>(null);
   const folderParentMenuRef = useRef<HTMLDivElement>(null);
   const sftpInternalDragRef = useRef(false);
+  const activeSessionIdRef = useRef<number | null>(null);
 
   const nextTabIdRef = useRef(1);
   const activeTab = useMemo(
@@ -267,8 +268,7 @@ export default function App() {
     await openDialog<void>({ type: 'alert', title, message });
   };
 
-  const isAtBottom = (term: Terminal): boolean =>
-    term.buffer.active.viewportY >= term.buffer.active.baseY - 1;
+  const isAtBottom = (term: Terminal): boolean => term.buffer.active.viewportY >= term.buffer.active.baseY;
 
   const appendPendingOutput = (sessionId: number, data: string) => {
     const old = pendingOutputRef.current.get(sessionId) || '';
@@ -286,13 +286,27 @@ export default function App() {
 
   const setPausedByScroll = (sessionId: number, paused: boolean, term?: Terminal) => {
     pausedByScrollRef.current.set(sessionId, paused);
-    if (activeSessionId === sessionId) {
+    if (activeSessionIdRef.current === sessionId) {
       setPausedOutput(paused);
     }
     if (!paused) {
       flushPendingOutput(sessionId, term);
     }
   };
+
+  const syncPauseStateWithViewport = (sessionId: number, term?: Terminal) => {
+    const target = term ?? terminalMapRef.current.get(sessionId);
+    if (!target) return;
+    const paused = !isAtBottom(target);
+    const current = pausedByScrollRef.current.get(sessionId) || false;
+    if (paused !== current) {
+      setPausedByScroll(sessionId, paused, target);
+    }
+  };
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
 
   useEffect(() => {
     sidebarWidthRef.current = sidebarWidth;
@@ -518,12 +532,16 @@ export default function App() {
       term.loadAddon(fit);
       term.loadAddon(new WebLinksAddon());
       term.onData(async (input) => {
-        const paused = pausedByScrollRef.current.get(sessionId) || false;
+        syncPauseStateWithViewport(sessionId, term);
+        const pausedByViewport = !isAtBottom(term);
+        const paused = (pausedByScrollRef.current.get(sessionId) || false) || pausedByViewport;
         if (paused && (input === '\r' || input === '\n')) {
           term.scrollToBottom();
           setPausedByScroll(sessionId, false, term);
+          requestAnimationFrame(() => syncPauseStateWithViewport(sessionId, term));
           return;
         }
+        if (paused) return;
         await window.terminalApi.sshSend({ sessionId, input });
       });
       term.onResize(({ cols, rows }) => {
@@ -536,11 +554,7 @@ export default function App() {
         await navigator.clipboard.writeText(selected);
       });
       term.onScroll(() => {
-        const paused = !isAtBottom(term);
-        const current = pausedByScrollRef.current.get(sessionId) || false;
-        if (paused !== current) {
-          setPausedByScroll(sessionId, paused, term);
-        }
+        syncPauseStateWithViewport(sessionId, term);
       });
       terminalMapRef.current.set(sessionId, term);
       fitMapRef.current.set(sessionId, fit);
@@ -752,6 +766,12 @@ export default function App() {
       }
       const pausedFlag = pausedByScrollRef.current.get(sessionId) || false;
       if (pausedFlag) {
+        if (isAtBottom(term)) {
+          setPausedByScroll(sessionId, false, term);
+          term.write(cleanData);
+          requestAnimationFrame(() => syncPauseStateWithViewport(sessionId, term));
+          return;
+        }
         appendPendingOutput(sessionId, cleanData);
         return;
       }
@@ -1458,9 +1478,15 @@ export default function App() {
               const term = terminalMapRef.current.get(activeSessionId);
               if (!term) return;
               requestAnimationFrame(() => {
-                if (!isAtBottom(term)) {
-                  setPausedByScroll(activeSessionId, true, term);
-                }
+                syncPauseStateWithViewport(activeSessionId, term);
+              });
+            }}
+            onMouseUp={() => {
+              if (!activeSessionId) return;
+              const term = terminalMapRef.current.get(activeSessionId);
+              if (!term) return;
+              requestAnimationFrame(() => {
+                syncPauseStateWithViewport(activeSessionId, term);
               });
             }}
             onContextMenu={async (event) => {

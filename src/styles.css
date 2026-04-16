@@ -426,10 +426,18 @@ body,
 }
 
 .pause-banner {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  z-index: 3;
+  pointer-events: none;
   padding: 6px 10px;
   font-size: 12px;
   color: #ffffff;
-  border-bottom: 1px dashed #666666;
+  border: 1px dashed #666666;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.78);
 }
 
 .sftp-sidebar-content {
