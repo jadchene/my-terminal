@@ -14,7 +14,7 @@
   },
   "keywords": [],
   "author": "jadchene",
-  "license": "ISC",
+  "license": "MIT",
   "build": {
     "appId": "com.myterminal.app",
     "directories": {

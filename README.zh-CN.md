@@ -34,4 +34,4 @@ npm run build
 
 ## 开源协议
 
-ISC
+MIT
