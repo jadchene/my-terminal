@@ -638,6 +638,7 @@ export default function App() {
     terminalContainerRef.current.innerHTML = '';
     term.open(terminalContainerRef.current);
     fitTerminalStabilized(sessionId);
+    focusTerminalInput(sessionId);
     const paused = !isAtBottom(term);
     setPausedByScroll(sessionId, paused, term);
   };
@@ -652,6 +653,13 @@ export default function App() {
     requestAnimationFrame(() => fitTerminal(sessionId));
     setTimeout(() => fitTerminal(sessionId), 80);
     setTimeout(() => fitTerminal(sessionId), 220);
+  };
+
+  const focusTerminalInput = (sessionId: number) => {
+    const term = terminalMapRef.current.get(sessionId);
+    if (!term) return;
+    requestAnimationFrame(() => term.focus());
+    setTimeout(() => term.focus(), 30);
   };
 
   const reconnectTab = async (tabId: number) => {
@@ -975,6 +983,7 @@ export default function App() {
   useEffect(() => {
     if (!settings || !activeSessionId) return;
     attachTerminal(activeSessionId, settings);
+    focusTerminalInput(activeSessionId);
     const paused = pausedByScrollRef.current.get(activeSessionId) || false;
     setPausedOutput(paused);
     if (!paused) {
@@ -1562,22 +1571,24 @@ export default function App() {
                                 : row.name}
                           </span>
                           <span>{row.percent.toFixed(0)}%</span>
-                          <button
-                            type="button"
-                            className="transfer-cancel-btn"
-                            title={row.status === 'running' ? '取消传输' : row.status === 'cancelled' ? '已取消' : '已完成'}
-                            disabled={row.status !== 'running'}
-                            onClick={() => {
-                              void cancelTransferRow(row);
-                            }}
-                          >
-                            取消
-                          </button>
                         </div>
-                            <div className="transfer-meta">
+                            <div className="transfer-meta-row">
+                              <div className="transfer-meta">
                               {row.totalCount > 0
                                 ? `共 ${row.totalCount} 项，当前 ${Math.min(row.index + 1, row.totalCount)}/${row.totalCount}`
                                 : '正在统计文件数量...'}
+                              </div>
+                              <button
+                                type="button"
+                                className="transfer-cancel-btn"
+                                title={row.status === 'running' ? '取消传输' : row.status === 'cancelled' ? '已取消' : '已完成'}
+                                disabled={row.status !== 'running'}
+                                onClick={() => {
+                                  void cancelTransferRow(row);
+                                }}
+                              >
+                                取消
+                              </button>
                             </div>
                             <div className="transfer-bar">
                               <div className="transfer-fill" style={{ width: `${row.percent}%` }} />
