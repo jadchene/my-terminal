@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-electron
+release
+*.log
+config.json
+app.db
+user-data
+.env
+.env.*
+.DS_Store
