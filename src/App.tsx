@@ -105,7 +105,7 @@ type TransferRow = {
   percent: number;
   transferred: number;
   total: number;
-  status: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error' | 'cancelled';
 };
 
 function formatSftpMeta(item: SftpItem) {
@@ -211,6 +211,7 @@ export default function App() {
   const folderParentMenuRef = useRef<HTMLDivElement>(null);
   const cursorStyleMenuRef = useRef<HTMLDivElement>(null);
   const sftpInternalDragRef = useRef(false);
+  const cancelledTransferBatchRef = useRef<Set<string>>(new Set());
   const activeSessionIdRef = useRef<number | null>(null);
   const tabsRef = useRef<Tab[]>([]);
   const sessionsRef = useRef<Session[]>([]);
@@ -474,6 +475,8 @@ export default function App() {
   };
 
   const updateTransferRow = (event: SftpTransferProgress) => {
+    const batchKey = `${event.sessionId}:${event.batchId}`;
+    if (cancelledTransferBatchRef.current.has(batchKey)) return;
     const key = `session-${event.sessionId}`;
     const percent = event.total > 0 ? Math.min(100, Number(((event.transferred / event.total) * 100).toFixed(1))) : 0;
     setTransferRows((prev) => {
@@ -515,17 +518,52 @@ export default function App() {
   };
 
   const markTransferBatchComplete = (event: SftpTransferBatchResult) => {
-    setTransferRows((prev) =>
-      prev.filter((it) => !(it.sessionId === event.sessionId && it.batchId === event.batchId)),
-    );
+    const batchKey = `${event.sessionId}:${event.batchId}`;
+    if (cancelledTransferBatchRef.current.has(batchKey)) {
+      cancelledTransferBatchRef.current.delete(batchKey);
+      setTransferRows((prev) => prev.filter((it) => !(it.sessionId === event.sessionId && it.batchId === event.batchId)));
+      return;
+    }
+    if (event.cancelled) {
+      setTransferRows((prev) =>
+        prev.map((it) =>
+          it.sessionId === event.sessionId && it.batchId === event.batchId
+            ? { ...it, status: 'cancelled', name: '已取消', percent: Math.min(it.percent, 99) }
+            : it,
+        ),
+      );
+      setTimeout(() => {
+        setTransferRows((prev) => prev.filter((it) => !(it.sessionId === event.sessionId && it.batchId === event.batchId)));
+      }, 1200);
+      return;
+    }
+    setTransferRows((prev) => prev.filter((it) => !(it.sessionId === event.sessionId && it.batchId === event.batchId)));
   };
 
   const markTransferError = (event: SftpTransferError) => {
+    const batchKey = `${event.sessionId}:${event.batchId}`;
+    if (cancelledTransferBatchRef.current.has(batchKey)) return;
     setTransferRows((prev) =>
       prev.map((it) =>
         it.sessionId === event.sessionId && it.batchId === event.batchId ? { ...it, status: 'error' } : it,
       ),
     );
+  };
+
+  const cancelTransferRow = async (row: TransferRow) => {
+    if (row.status !== 'running') return;
+    const batchKey = `${row.sessionId}:${row.batchId}`;
+    cancelledTransferBatchRef.current.add(batchKey);
+    if (cancelledTransferBatchRef.current.size > 200) {
+      cancelledTransferBatchRef.current.clear();
+      cancelledTransferBatchRef.current.add(batchKey);
+    }
+    setTransferRows((prev) => prev.filter((it) => !(it.sessionId === row.sessionId && it.batchId === row.batchId)));
+    const ok = await window.terminalApi.sftpCancelBatch({ sessionId: row.sessionId, batchId: row.batchId }).catch(() => false);
+    if (!ok) {
+      cancelledTransferBatchRef.current.delete(batchKey);
+      await showAlert('取消传输失败，请重试', 'SFTP');
+    }
   };
 
   const attachTerminal = (sessionId: number, localSettings: Settings) => {
@@ -1524,6 +1562,17 @@ export default function App() {
                                 : row.name}
                           </span>
                           <span>{row.percent.toFixed(0)}%</span>
+                          <button
+                            type="button"
+                            className="transfer-cancel-btn"
+                            title={row.status === 'running' ? '取消传输' : row.status === 'cancelled' ? '已取消' : '已完成'}
+                            disabled={row.status !== 'running'}
+                            onClick={() => {
+                              void cancelTransferRow(row);
+                            }}
+                          >
+                            取消
+                          </button>
                         </div>
                             <div className="transfer-meta">
                               {row.totalCount > 0

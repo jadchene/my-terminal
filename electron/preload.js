@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('terminalApi', {
   sftpDownload: (payload) => ipcRenderer.invoke('sftp:download', payload),
   sftpUploadBatch: (payload) => ipcRenderer.invoke('sftp:upload-batch', payload),
   sftpDownloadBatch: (payload) => ipcRenderer.invoke('sftp:download-batch', payload),
+  sftpCancelBatch: (payload) => ipcRenderer.invoke('sftp:cancel-batch', payload),
   onSftpProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('sftp:progress', handler);

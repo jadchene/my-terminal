@@ -111,6 +111,7 @@ export type SftpTransferBatchResult = {
   totalCount: number;
   successCount: number;
   failedCount: number;
+  cancelled?: boolean;
 };
 
 export type SftpTransferError = {
@@ -161,6 +162,7 @@ declare global {
       sftpDownload: (payload: { sessionId: number; remotePath: string }) => Promise<boolean>;
       sftpUploadBatch: (payload: { sessionId: number; remoteDir: string; localPaths?: string[] }) => Promise<boolean>;
       sftpDownloadBatch: (payload: { sessionId: number; remotePaths: string[]; localDir?: string }) => Promise<boolean>;
+      sftpCancelBatch: (payload: { sessionId: number; batchId: string }) => Promise<boolean>;
       onSftpProgress: (cb: (event: SftpTransferProgress) => void) => () => void;
       onSftpBatchComplete: (cb: (event: SftpTransferBatchResult) => void) => () => void;
       onSftpBatchError: (cb: (event: SftpTransferError) => void) => () => void;

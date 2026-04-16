@@ -494,7 +494,7 @@ body,
 
 .transfer-title {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: 44px 1fr auto auto;
   gap: 6px;
   font-size: 12px;
   white-space: nowrap;
@@ -524,6 +524,27 @@ body,
 
 .transfer-error .transfer-fill {
   background: #ff6b6b;
+}
+
+.transfer-cancel-btn {
+  min-width: 36px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #000000;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: default;
+}
+
+.transfer-cancel-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .panel-actions-main {

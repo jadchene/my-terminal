@@ -60,6 +60,18 @@ type SftpProgressPayload = {
   total: number;
 };
 
+type SftpBatchControl = {
+  sessionId: number;
+  connectionId: number;
+  cancelled: boolean;
+};
+
+type SftpProgressThrottleState = {
+  at: number;
+  transferred: number;
+  total: number;
+};
+
 type PendingCwdProbe = {
   token: string;
   buffer: string;
@@ -123,6 +135,8 @@ app.setPath('userData', userDataPath);
 const db = new sqlite3.Database(dbPath);
 const sshStateMap = new Map<number, SshConnectionState>();
 const sftpMap = new Map<number, any>();
+const sftpBatchControlMap = new Map<string, SftpBatchControl>();
+const sftpProgressThrottleMap = new Map<string, SftpProgressThrottleState>();
 const connectionSessionMap = new Map<number, Session>();
 const connectionHomeMap = new Map<number, string>();
 const pendingCwdProbeMap = new Map<number, PendingCwdProbe>();
@@ -401,6 +415,56 @@ function emitSftpProgress(payload: SftpProgressPayload) {
   safeSend('sftp:progress', payload);
 }
 
+function emitSftpProgressMaybe(payload: SftpProgressPayload, force = false) {
+  const key = `${payload.sessionId}:${payload.batchId}:${payload.index}`;
+  if (force) {
+    emitSftpProgress(payload);
+    sftpProgressThrottleMap.set(key, { at: Date.now(), transferred: payload.transferred, total: payload.total });
+    return;
+  }
+  const now = Date.now();
+  const prev = sftpProgressThrottleMap.get(key);
+  if (!prev) {
+    emitSftpProgress(payload);
+    sftpProgressThrottleMap.set(key, { at: now, transferred: payload.transferred, total: payload.total });
+    return;
+  }
+  const total = Math.max(0, payload.total || 0);
+  const isDone = total > 0 && payload.transferred >= total;
+  if (isDone) {
+    emitSftpProgress(payload);
+    sftpProgressThrottleMap.delete(key);
+    return;
+  }
+  const prevPercent = prev.total > 0 ? Math.floor((prev.transferred / prev.total) * 100) : 0;
+  const nextPercent = total > 0 ? Math.floor((payload.transferred / total) * 100) : 0;
+  const percentChanged = nextPercent > prevPercent;
+  const elapsed = now - prev.at;
+  if (percentChanged || elapsed >= 120) {
+    emitSftpProgress(payload);
+    sftpProgressThrottleMap.set(key, { at: now, transferred: payload.transferred, total });
+    return;
+  }
+  sftpProgressThrottleMap.set(key, { at: prev.at, transferred: payload.transferred, total });
+}
+
+class SftpBatchCancelledError extends Error {
+  constructor() {
+    super('SFTP 传输已取消');
+    this.name = 'SftpBatchCancelledError';
+  }
+}
+
+function assertBatchNotCancelled(control: SftpBatchControl) {
+  if (control.cancelled) {
+    throw new SftpBatchCancelledError();
+  }
+}
+
+function isBatchCancelledError(error: unknown): boolean {
+  return error instanceof SftpBatchCancelledError;
+}
+
 function getDefaultDownloadDir(): string {
   const settings = readSettings();
   const configured = String(settings.behavior.defaultDownloadDir || '').trim();
@@ -440,7 +504,13 @@ type UploadTask = {
   size: number;
 };
 
-async function collectUploadTasks(localPath: string, remoteDir: string, tasks: UploadTask[]) {
+async function collectUploadTasks(
+  localPath: string,
+  remoteDir: string,
+  tasks: UploadTask[],
+  shouldCancel?: () => boolean,
+) {
+  if (shouldCancel?.()) throw new SftpBatchCancelledError();
   const stat = await fs.promises.stat(localPath);
   if (!stat.isDirectory()) {
     tasks.push({
@@ -454,8 +524,10 @@ async function collectUploadTasks(localPath: string, remoteDir: string, tasks: U
 
   const rootRemoteDir = buildRemotePath(remoteDir, path.basename(localPath));
   const walk = async (currentLocalDir: string, currentRemoteDir: string) => {
+    if (shouldCancel?.()) throw new SftpBatchCancelledError();
     const entries = await fs.promises.readdir(currentLocalDir, { withFileTypes: true });
     for (const entry of entries) {
+      if (shouldCancel?.()) throw new SftpBatchCancelledError();
       const localChild = path.join(currentLocalDir, entry.name);
       const remoteChild = buildRemotePath(currentRemoteDir, entry.name);
       if (entry.isDirectory()) {
@@ -490,7 +562,9 @@ async function collectDownloadTasks(
   tasks: DownloadTask[],
   displayRootPath: string,
   displayRootName: string,
+  shouldCancel?: () => boolean,
 ) {
+  if (shouldCancel?.()) throw new SftpBatchCancelledError();
   const attrs = await client.stat(remotePath);
   const normalizedCurrent = remotePath.replace(/\/+$/, '');
   const normalizedRoot = displayRootPath.replace(/\/+$/, '');
@@ -511,11 +585,12 @@ async function collectDownloadTasks(
   await fs.promises.mkdir(localPath, { recursive: true });
   const items = await client.list(remotePath);
   for (const item of items) {
+    if (shouldCancel?.()) throw new SftpBatchCancelledError();
     if (item.name === '.' || item.name === '..') continue;
     const childRemote = buildRemotePath(remotePath, item.name);
     const childLocal = path.join(localPath, item.name);
     if (item.type === 'd') {
-      await collectDownloadTasks(client, childRemote, childLocal, tasks, displayRootPath, displayRootName);
+      await collectDownloadTasks(client, childRemote, childLocal, tasks, displayRootPath, displayRootName, shouldCancel);
       continue;
     }
     tasks.push({
@@ -669,6 +744,11 @@ function requireConnected(connectionId: number) {
 }
 
 async function cleanupConnectionState(connectionId: number) {
+  for (const [, control] of sftpBatchControlMap) {
+    if (control.connectionId === connectionId) {
+      control.cancelled = true;
+    }
+  }
   clearPendingCwdProbe(connectionId, new Error('连接已关闭'));
   clearPendingPwdCapture(connectionId, new Error('连接已关闭'));
   const sshState = sshStateMap.get(connectionId);
@@ -706,25 +786,33 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
   const client = await getOrCreateSftp(connectionId, session);
   const remoteDir = await resolveRemotePath(client, payload.remoteDir);
   const batchId = createBatchId();
-  emitSftpProgress({
-    sessionId: payload.sessionId,
-    batchId,
-    direction: 'upload',
-    index: 0,
-    totalCount: 0,
-    name: '准备中',
-    transferred: 0,
-    total: 0,
-  });
+  const control: SftpBatchControl = { sessionId: payload.sessionId, connectionId, cancelled: false };
+  sftpBatchControlMap.set(batchId, control);
+  emitSftpProgressMaybe(
+    {
+      sessionId: payload.sessionId,
+      batchId,
+      direction: 'upload',
+      index: 0,
+      totalCount: 0,
+      name: '准备中',
+      transferred: 0,
+      total: 0,
+    },
+    true,
+  );
   const tasks: UploadTask[] = [];
   let successCount = 0;
   let failedCount = 0;
   try {
     for (const localPath of payload.localPaths) {
-      await collectUploadTasks(localPath, remoteDir, tasks);
+      assertBatchNotCancelled(control);
+      await collectUploadTasks(localPath, remoteDir, tasks, () => control.cancelled);
     }
+    assertBatchNotCancelled(control);
     if (tasks.length > 0) {
-      emitSftpProgress({
+      emitSftpProgressMaybe(
+        {
         sessionId: payload.sessionId,
         batchId,
         direction: 'upload',
@@ -733,15 +821,19 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
         name: tasks[0].name,
         transferred: 0,
         total: tasks[0].size || 0,
-      });
+        },
+        true,
+      );
     }
     for (let index = 0; index < tasks.length; index += 1) {
+      assertBatchNotCancelled(control);
       const task = tasks[index];
       try {
         await client.mkdir(path.posix.dirname(task.remotePath), true);
         await client.fastPut(task.localPath, task.remotePath, {
           step: (transferred: number, _chunk: number, total: number) => {
-            emitSftpProgress({
+            if (control.cancelled) return;
+            emitSftpProgressMaybe({
               sessionId: payload.sessionId,
               batchId,
               direction: 'upload',
@@ -753,8 +845,10 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
             });
           },
         });
+        assertBatchNotCancelled(control);
         successCount += 1;
-        emitSftpProgress({
+        emitSftpProgressMaybe(
+          {
           sessionId: payload.sessionId,
           batchId,
           direction: 'upload',
@@ -763,8 +857,11 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
           name: task.name,
           transferred: task.size,
           total: task.size,
-        });
+          },
+          true,
+        );
       } catch (error) {
+        if (isBatchCancelledError(error) || control.cancelled) break;
         failedCount += 1;
         safeSend('sftp:batch-error', {
           sessionId: payload.sessionId,
@@ -776,6 +873,18 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
       }
     }
   } catch (error) {
+    if (isBatchCancelledError(error) || control.cancelled) {
+      safeSend('sftp:batch-complete', {
+        sessionId: payload.sessionId,
+        batchId,
+        direction: 'upload',
+        totalCount: tasks.length,
+        successCount,
+        failedCount,
+        cancelled: true,
+      });
+      return false;
+    }
     failedCount += 1;
     safeSend('sftp:batch-error', {
       sessionId: payload.sessionId,
@@ -784,6 +893,11 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
       name: 'batch',
       error: String(error),
     });
+  } finally {
+    sftpBatchControlMap.delete(batchId);
+    for (const [key] of sftpProgressThrottleMap) {
+      if (key.includes(`:${batchId}:`)) sftpProgressThrottleMap.delete(key);
+    }
   }
   safeSend('sftp:batch-complete', {
     sessionId: payload.sessionId,
@@ -792,8 +906,9 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
     totalCount: tasks.length,
     successCount,
     failedCount,
+    cancelled: control.cancelled,
   });
-  return successCount > 0 || tasks.length === 0;
+  return !control.cancelled && (successCount > 0 || tasks.length === 0);
 }
 
 async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: string[]; localDir?: string }): Promise<boolean> {
@@ -803,30 +918,38 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
   const session = await getSessionForConnection(connectionId);
   const client = await getOrCreateSftp(connectionId, session);
   const batchId = createBatchId();
-  emitSftpProgress({
-    sessionId: payload.sessionId,
-    batchId,
-    direction: 'download',
+  const control: SftpBatchControl = { sessionId: payload.sessionId, connectionId, cancelled: false };
+  sftpBatchControlMap.set(batchId, control);
+  emitSftpProgressMaybe(
+    {
+      sessionId: payload.sessionId,
+      batchId,
+      direction: 'download',
     index: 0,
     totalCount: 0,
-    name: '准备中',
-    transferred: 0,
-    total: 0,
-  });
+      name: '准备中',
+      transferred: 0,
+      total: 0,
+    },
+    true,
+  );
   const targetDir = payload.localDir || app.getPath('downloads');
   const tasks: DownloadTask[] = [];
   let successCount = 0;
   let failedCount = 0;
   try {
     for (const rawPath of payload.remotePaths) {
+      assertBatchNotCancelled(control);
       const remotePath = await resolveRemotePath(client, rawPath);
       const normalizedRemote = remotePath.replace(/\/+$/, '') || '/';
       const fileName = path.basename(normalizedRemote);
       const localPath = path.join(targetDir, fileName);
-      await collectDownloadTasks(client, remotePath, localPath, tasks, normalizedRemote, fileName || '/');
+      await collectDownloadTasks(client, remotePath, localPath, tasks, normalizedRemote, fileName || '/', () => control.cancelled);
     }
+    assertBatchNotCancelled(control);
     if (tasks.length > 0) {
-      emitSftpProgress({
+      emitSftpProgressMaybe(
+        {
         sessionId: payload.sessionId,
         batchId,
         direction: 'download',
@@ -835,15 +958,19 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
         name: tasks[0].name,
         transferred: 0,
         total: tasks[0].size || 0,
-      });
+        },
+        true,
+      );
     }
     for (let index = 0; index < tasks.length; index += 1) {
+      assertBatchNotCancelled(control);
       const task = tasks[index];
       try {
         await fs.promises.mkdir(path.dirname(task.localPath), { recursive: true });
         await client.fastGet(task.remotePath, task.localPath, {
           step: (transferred: number, _chunk: number, total: number) => {
-            emitSftpProgress({
+            if (control.cancelled) return;
+            emitSftpProgressMaybe({
               sessionId: payload.sessionId,
               batchId,
               direction: 'download',
@@ -855,8 +982,10 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
             });
           },
         });
+        assertBatchNotCancelled(control);
         successCount += 1;
-        emitSftpProgress({
+        emitSftpProgressMaybe(
+          {
           sessionId: payload.sessionId,
           batchId,
           direction: 'download',
@@ -865,8 +994,11 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
           name: task.name,
           transferred: task.size,
           total: task.size,
-        });
+          },
+          true,
+        );
       } catch (error) {
+        if (isBatchCancelledError(error) || control.cancelled) break;
         failedCount += 1;
         safeSend('sftp:batch-error', {
           sessionId: payload.sessionId,
@@ -878,6 +1010,18 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
       }
     }
   } catch (error) {
+    if (isBatchCancelledError(error) || control.cancelled) {
+      safeSend('sftp:batch-complete', {
+        sessionId: payload.sessionId,
+        batchId,
+        direction: 'download',
+        totalCount: tasks.length,
+        successCount,
+        failedCount,
+        cancelled: true,
+      });
+      return false;
+    }
     failedCount += 1;
     safeSend('sftp:batch-error', {
       sessionId: payload.sessionId,
@@ -886,6 +1030,11 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
       name: 'batch',
       error: String(error),
     });
+  } finally {
+    sftpBatchControlMap.delete(batchId);
+    for (const [key] of sftpProgressThrottleMap) {
+      if (key.includes(`:${batchId}:`)) sftpProgressThrottleMap.delete(key);
+    }
   }
   safeSend('sftp:batch-complete', {
     sessionId: payload.sessionId,
@@ -894,8 +1043,9 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
     totalCount: tasks.length,
     successCount,
     failedCount,
+    cancelled: control.cancelled,
   });
-  return successCount > 0 || tasks.length === 0;
+  return !control.cancelled && (successCount > 0 || tasks.length === 0);
 }
 
 function createWindow() {
@@ -1555,6 +1705,21 @@ function registerIpc() {
     const ok = await runSftpDownloadBatch({ sessionId: payload.sessionId, remotePaths: payload.remotePaths, localDir });
     return ok;
   });
+  ipcMain.handle('sftp:cancel-batch', async (_, payload: { sessionId: number; batchId: string }) => {
+    const batch = sftpBatchControlMap.get(payload.batchId);
+    if (!batch || batch.sessionId !== payload.sessionId) return false;
+    batch.cancelled = true;
+    const sftp = sftpMap.get(batch.connectionId);
+    if (sftp) {
+      try {
+        await sftp.end();
+      } catch {
+        // Ignore close errors when cancelling transfer.
+      }
+      sftpMap.delete(batch.connectionId);
+    }
+    return true;
+  });
   ipcMain.handle('dialog:pick-directory', async (_, defaultPath?: string) => {
     const picked = await dialog.showOpenDialog({
       properties: ['openDirectory', 'createDirectory'],
@@ -1605,6 +1770,7 @@ app.on('before-quit', async () => {
 
   for (const [, sftp] of sftpMap) await sftp.end();
   sftpMap.clear();
+  sftpBatchControlMap.clear();
   db.close();
 });
 
