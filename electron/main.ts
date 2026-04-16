@@ -14,6 +14,9 @@ type AppSettings = {
     uiFontSize: number;
     terminalFontFamily: string;
     terminalFontSize: number;
+    terminalCursorStyle: 'block' | 'underline' | 'bar';
+    terminalCursorBlink: boolean;
+    terminalCursorWidth: number;
   };
   behavior: {
     autoCopySelection: boolean;
@@ -80,6 +83,9 @@ const defaultSettings: AppSettings = {
     uiFontSize: 13,
     terminalFontFamily: 'Consolas, Courier New, monospace',
     terminalFontSize: 16,
+    terminalCursorStyle: 'block',
+    terminalCursorBlink: true,
+    terminalCursorWidth: 2,
   },
   behavior: {
     autoCopySelection: true,

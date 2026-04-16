@@ -172,6 +172,7 @@ export default function App() {
   const [showDialogPassword, setShowDialogPassword] = useState(false);
   const [sessionFolderMenuOpen, setSessionFolderMenuOpen] = useState(false);
   const [folderParentMenuOpen, setFolderParentMenuOpen] = useState(false);
+  const [cursorStyleMenuOpen, setCursorStyleMenuOpen] = useState(false);
 
   const [sftpPath, setSftpPath] = useState('~');
   const [sftpPathInput, setSftpPathInput] = useState('~');
@@ -206,6 +207,7 @@ export default function App() {
   const sidebarResizingRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const sessionFolderMenuRef = useRef<HTMLDivElement>(null);
   const folderParentMenuRef = useRef<HTMLDivElement>(null);
+  const cursorStyleMenuRef = useRef<HTMLDivElement>(null);
   const sftpInternalDragRef = useRef(false);
   const activeSessionIdRef = useRef<number | null>(null);
 
@@ -519,10 +521,12 @@ export default function App() {
 
     if (!term) {
       term = new Terminal({
-        cursorBlink: true,
         fontFamily: localSettings.theme.terminalFontFamily || 'Consolas',
         fontSize: localSettings.theme.terminalFontSize || 16,
         fontWeight: 'bold',
+        cursorStyle: localSettings.theme.terminalCursorStyle || 'block',
+        cursorBlink: localSettings.theme.terminalCursorBlink ?? true,
+        cursorWidth: Math.max(1, Math.min(8, Number(localSettings.theme.terminalCursorWidth || 2))),
         theme: {
           background: localSettings.theme.backgroundColor,
           foreground: localSettings.theme.foregroundColor,
@@ -564,6 +568,9 @@ export default function App() {
     term.options.fontFamily = localSettings.theme.terminalFontFamily || 'Consolas';
     term.options.fontSize = localSettings.theme.terminalFontSize || 16;
     term.options.fontWeight = 'bold';
+    term.options.cursorStyle = localSettings.theme.terminalCursorStyle || 'block';
+    term.options.cursorBlink = localSettings.theme.terminalCursorBlink ?? true;
+    term.options.cursorWidth = Math.max(1, Math.min(8, Number(localSettings.theme.terminalCursorWidth || 2)));
     term.options.theme = {
       background: localSettings.theme.backgroundColor,
       foreground: localSettings.theme.foregroundColor,
@@ -929,6 +936,21 @@ export default function App() {
       window.removeEventListener('pointerdown', onPointerDown);
     };
   }, [folderParentMenuOpen]);
+
+  useEffect(() => {
+    if (!cursorStyleMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const root = cursorStyleMenuRef.current;
+      if (!root) return;
+      const target = event.target as Node | null;
+      if (target && root.contains(target)) return;
+      setCursorStyleMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [cursorStyleMenuOpen]);
 
   if (!settings) return <div className="loading">加载中...</div>;
 
@@ -1780,6 +1802,99 @@ export default function App() {
                       }
                     />
                   </label>
+                  <label>
+                    光标样式
+                    <div className="select-like" ref={cursorStyleMenuRef}>
+                      <button
+                        type="button"
+                        className="select-like-trigger"
+                        onClick={() => setCursorStyleMenuOpen((v) => !v)}
+                      >
+                        <span>
+                          {settingsDraft.theme.terminalCursorStyle === 'underline'
+                            ? '下划线'
+                            : settingsDraft.theme.terminalCursorStyle === 'bar'
+                              ? '竖线'
+                              : '块'}
+                        </span>
+                        <span aria-hidden="true">▾</span>
+                      </button>
+                      {cursorStyleMenuOpen && (
+                        <div className="select-like-menu">
+                          <button
+                            type="button"
+                            className={settingsDraft.theme.terminalCursorStyle === 'block' ? 'active' : ''}
+                            onClick={() => {
+                              setSettingsDraft({
+                                ...settingsDraft,
+                                theme: { ...settingsDraft.theme, terminalCursorStyle: 'block' },
+                              });
+                              setCursorStyleMenuOpen(false);
+                            }}
+                          >
+                            块
+                          </button>
+                          <button
+                            type="button"
+                            className={settingsDraft.theme.terminalCursorStyle === 'underline' ? 'active' : ''}
+                            onClick={() => {
+                              setSettingsDraft({
+                                ...settingsDraft,
+                                theme: { ...settingsDraft.theme, terminalCursorStyle: 'underline' },
+                              });
+                              setCursorStyleMenuOpen(false);
+                            }}
+                          >
+                            下划线
+                          </button>
+                          <button
+                            type="button"
+                            className={settingsDraft.theme.terminalCursorStyle === 'bar' ? 'active' : ''}
+                            onClick={() => {
+                              setSettingsDraft({
+                                ...settingsDraft,
+                                theme: { ...settingsDraft.theme, terminalCursorStyle: 'bar' },
+                              });
+                              setCursorStyleMenuOpen(false);
+                            }}
+                          >
+                            竖线
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                  <label className="check-line">
+                    <input
+                      type="checkbox"
+                      checked={settingsDraft.theme.terminalCursorBlink}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          theme: { ...settingsDraft.theme, terminalCursorBlink: e.target.checked },
+                        })
+                      }
+                    />
+                    光标闪烁
+                  </label>
+                  <label>
+                    竖线光标宽度
+                    <input
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={settingsDraft.theme.terminalCursorWidth ?? 2}
+                      onChange={(e) =>
+                        setSettingsDraft({
+                          ...settingsDraft,
+                          theme: {
+                            ...settingsDraft.theme,
+                            terminalCursorWidth: Math.max(1, Math.min(8, Number(e.target.value) || 2)),
+                          },
+                        })
+                      }
+                    />
+                  </label>
                 </>
               )}
 
@@ -1872,17 +1987,28 @@ export default function App() {
                   setShowSettings(false);
                   setSettingsDraft(null);
                   setSettingsTab('appearance');
+                  setCursorStyleMenuOpen(false);
                 }}
               >
                 取消
               </button>
               <button
                 onClick={async () => {
-                  const saved = await window.terminalApi.updateSettings(settingsDraft);
+                  const normalizedDraft: Settings = {
+                    ...settingsDraft,
+                    theme: {
+                      ...settingsDraft.theme,
+                      terminalCursorStyle: settingsDraft.theme.terminalCursorStyle || 'block',
+                      terminalCursorBlink: settingsDraft.theme.terminalCursorBlink ?? true,
+                      terminalCursorWidth: Math.max(1, Math.min(8, Number(settingsDraft.theme.terminalCursorWidth ?? 2))),
+                    },
+                  };
+                  const saved = await window.terminalApi.updateSettings(normalizedDraft);
                   setSettings(saved);
                   setSettingsDraft(null);
                   setShowSettings(false);
                   setSettingsTab('appearance');
+                  setCursorStyleMenuOpen(false);
                 }}
               >
                 保存

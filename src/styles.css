@@ -758,6 +758,11 @@ body,
   background: #000000;
 }
 
+.select-like-menu.static {
+  position: static;
+  max-height: none;
+}
+
 .select-like-menu button {
   width: 100%;
   border: 0;

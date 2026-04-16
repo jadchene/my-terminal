@@ -6,6 +6,9 @@ export type Settings = {
     uiFontSize: number;
     terminalFontFamily: string;
     terminalFontSize: number;
+    terminalCursorStyle: 'block' | 'underline' | 'bar';
+    terminalCursorBlink: boolean;
+    terminalCursorWidth: number;
   };
   behavior: {
     autoCopySelection: boolean;
