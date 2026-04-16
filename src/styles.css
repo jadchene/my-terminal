@@ -769,6 +769,12 @@ body,
   background: #151515;
 }
 
+.select-like-menu button.tree-option {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .dialog-message {
   font-size: 13px;
   line-height: 1.5;

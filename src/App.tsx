@@ -57,11 +57,29 @@ const defaultSessionForm: SessionForm = {
   name: '',
   host: '',
   port: 22,
-  username: '',
+  username: 'root',
   password: '',
   remember_password: 1,
   default_session: 0,
 };
+
+function compareByNameThenId(a: { name: string; id: number }, b: { name: string; id: number }): number {
+  const byName = a.name.localeCompare(b.name, 'zh-Hans-CN', { sensitivity: 'base', numeric: true });
+  if (byName !== 0) return byName;
+  return a.id - b.id;
+}
+
+function buildCopiedSessionName(baseName: string, existingNames: Set<string>): string {
+  const seed = `${baseName} - 副本`;
+  if (!existingNames.has(seed)) return seed;
+  let index = 2;
+  while (index < 1000) {
+    const next = `${seed} ${index}`;
+    if (!existingNames.has(next)) return next;
+    index += 1;
+  }
+  return `${seed} ${Date.now()}`;
+}
 
 function formatSpeed(value: number): string {
   if (value > 1024 * 1024) return `${(value / 1024 / 1024).toFixed(2)} MB/s`;
@@ -153,6 +171,7 @@ export default function App() {
   const [showSessionPassword, setShowSessionPassword] = useState(false);
   const [showDialogPassword, setShowDialogPassword] = useState(false);
   const [sessionFolderMenuOpen, setSessionFolderMenuOpen] = useState(false);
+  const [folderParentMenuOpen, setFolderParentMenuOpen] = useState(false);
 
   const [sftpPath, setSftpPath] = useState('~');
   const [sftpPathInput, setSftpPathInput] = useState('~');
@@ -186,6 +205,7 @@ export default function App() {
   const sidebarWidthRef = useRef(300);
   const sidebarResizingRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const sessionFolderMenuRef = useRef<HTMLDivElement>(null);
+  const folderParentMenuRef = useRef<HTMLDivElement>(null);
   const sftpInternalDragRef = useRef(false);
 
   const nextTabIdRef = useRef(1);
@@ -197,6 +217,25 @@ export default function App() {
     () => sessions.find((it) => it.id === activeTab?.sessionId) || null,
     [sessions, activeTab],
   );
+  const folderPathMap = useMemo(() => {
+    const byParent = new Map<number | null, Folder[]>();
+    for (const folder of folders) {
+      const list = byParent.get(folder.parent_id) || [];
+      list.push(folder);
+      byParent.set(folder.parent_id, list);
+    }
+    const result = new Map<number, string>();
+    const walk = (parentId: number | null, prefix: string) => {
+      const children = (byParent.get(parentId) || []).sort(compareByNameThenId);
+      for (const child of children) {
+        const currentPath = prefix ? `${prefix}/${child.name}` : child.name;
+        result.set(child.id, currentPath);
+        walk(child.id, currentPath);
+      }
+    };
+    walk(null, '');
+    return result;
+  }, [folders]);
 
   const openDialog = <T,>(next: DialogState): Promise<T> =>
     new Promise<T>((resolve) => {
@@ -606,7 +645,7 @@ export default function App() {
     });
   };
 
-  const openSessionModal = (target?: Session) => {
+  const openSessionModal = (target?: Session, preferredFolderId?: number | null) => {
     if (target) {
       setEditingSession(target);
       setSessionForm({
@@ -621,17 +660,62 @@ export default function App() {
       });
     } else {
       setEditingSession(null);
-      setSessionForm(defaultSessionForm);
+      setSessionForm({ ...defaultSessionForm, folder_id: preferredFolderId ?? null });
     }
     setShowSessionPassword(false);
     setSessionFolderMenuOpen(false);
     setShowSessionModal(true);
   };
 
+  const openFolderModal = (parentId?: number | null) => {
+    setFolderName('');
+    setFolderParent(parentId ?? null);
+    setFolderParentMenuOpen(false);
+    setShowFolderModal(true);
+  };
+
   const getFolderLabel = (folderId: number | null) => {
     if (!folderId) return '根目录';
-    const matched = folders.find((folder) => folder.id === folderId);
-    return matched?.name || '根目录';
+    return folderPathMap.get(folderId) || '根目录';
+  };
+
+  const renderFolderTreeOptions = (
+    activeId: number | null,
+    onSelect: (folderId: number | null) => void,
+  ): JSX.Element[] => {
+    const byParent = new Map<number | null, Folder[]>();
+    for (const folder of folders) {
+      const list = byParent.get(folder.parent_id) || [];
+      list.push(folder);
+      byParent.set(folder.parent_id, list);
+    }
+    const renderNodes = (parentId: number | null, depth: number): JSX.Element[] => {
+      const children = (byParent.get(parentId) || []).sort(compareByNameThenId);
+      return children.flatMap((folder) => [
+        <button
+          key={`folder-option-${folder.id}`}
+          type="button"
+          className={activeId === folder.id ? 'active tree-option' : 'tree-option'}
+          style={{ paddingLeft: `${10 + depth * 16}px` }}
+          onClick={() => onSelect(folder.id)}
+          title={folderPathMap.get(folder.id) || folder.name}
+        >
+          {folder.name}
+        </button>,
+        ...renderNodes(folder.id, depth + 1),
+      ]);
+    };
+    return [
+      <button
+        key="folder-option-root"
+        type="button"
+        className={activeId == null ? 'active tree-option' : 'tree-option'}
+        onClick={() => onSelect(null)}
+      >
+        根目录
+      </button>,
+      ...renderNodes(null, 0),
+    ];
   };
 
   useEffect(() => {
@@ -811,10 +895,28 @@ export default function App() {
     };
   }, [sessionFolderMenuOpen]);
 
+  useEffect(() => {
+    if (!folderParentMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const root = folderParentMenuRef.current;
+      if (!root) return;
+      const target = event.target as Node | null;
+      if (target && root.contains(target)) return;
+      setFolderParentMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [folderParentMenuOpen]);
+
   if (!settings) return <div className="loading">加载中...</div>;
 
   const renderSessionList = (folderId: number | null): JSX.Element[] =>
-    sessions.filter((session) => session.folder_id === folderId).map((session) => (
+    sessions
+      .filter((session) => session.folder_id === folderId)
+      .sort(compareByNameThenId)
+      .map((session) => (
       <div
         key={session.id}
         className="session-node"
@@ -837,11 +939,12 @@ export default function App() {
           {session.name}
         </button>
       </div>
-    ));
+      ));
 
   const folderTree = (parentId: number | null): JSX.Element[] =>
     folders
       .filter((folder) => folder.parent_id === parentId)
+      .sort(compareByNameThenId)
       .map((folder) => (
         <div key={folder.id} className="folder-node">
           <div
@@ -990,7 +1093,7 @@ export default function App() {
             {sidebarTab === 'sessions' && (
               <div className="tree-content panel-content">
                 <div className="sidebar-actions">
-                  <button className="icon-btn top-icon-btn" title="新建目录" onClick={() => setShowFolderModal(true)}>
+                  <button className="icon-btn top-icon-btn" title="新建目录" onClick={() => openFolderModal(null)}>
                     <FolderPlus size={16} strokeWidth={1.8} />
                   </button>
                   <button className="icon-btn top-icon-btn" title="新建会话" onClick={() => openSessionModal()}>
@@ -1429,29 +1532,10 @@ export default function App() {
                 </button>
                 {sessionFolderMenuOpen && (
                   <div className="select-like-menu">
-                    <button
-                      type="button"
-                      className={sessionForm.folder_id == null ? 'active' : ''}
-                      onClick={() => {
-                        setSessionForm({ ...sessionForm, folder_id: null });
-                        setSessionFolderMenuOpen(false);
-                      }}
-                    >
-                      根目录
-                    </button>
-                    {folders.map((folder) => (
-                      <button
-                        key={folder.id}
-                        type="button"
-                        className={sessionForm.folder_id === folder.id ? 'active' : ''}
-                        onClick={() => {
-                          setSessionForm({ ...sessionForm, folder_id: folder.id });
-                          setSessionFolderMenuOpen(false);
-                        }}
-                      >
-                        {folder.name}
-                      </button>
-                    ))}
+                    {renderFolderTreeOptions(sessionForm.folder_id, (folderId) => {
+                      setSessionForm({ ...sessionForm, folder_id: folderId });
+                      setSessionFolderMenuOpen(false);
+                    })}
                   </div>
                 )}
               </div>
@@ -1511,17 +1595,34 @@ export default function App() {
             </label>
             <label>
               父目录
-              <select value={folderParent ?? ''} onChange={(e) => setFolderParent(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">根目录</option>
-                {folders.map((folder) => (
-                  <option key={folder.id} value={folder.id}>
-                    {folder.name}
-                  </option>
-                ))}
-              </select>
+              <div className="select-like" ref={folderParentMenuRef}>
+                <button
+                  type="button"
+                  className="select-like-trigger"
+                  onClick={() => setFolderParentMenuOpen((v) => !v)}
+                >
+                  <span>{getFolderLabel(folderParent)}</span>
+                  <span aria-hidden="true">▾</span>
+                </button>
+                {folderParentMenuOpen && (
+                  <div className="select-like-menu">
+                    {renderFolderTreeOptions(folderParent, (folderId) => {
+                      setFolderParent(folderId);
+                      setFolderParentMenuOpen(false);
+                    })}
+                  </div>
+                )}
+              </div>
             </label>
             <div className="modal-actions">
-              <button onClick={() => setShowFolderModal(false)}>取消</button>
+              <button
+                onClick={() => {
+                  setFolderParentMenuOpen(false);
+                  setShowFolderModal(false);
+                }}
+              >
+                取消
+              </button>
               <button
                 onClick={async () => {
                   if (!folderName.trim()) {
@@ -1532,6 +1633,7 @@ export default function App() {
                   await loadSessionData();
                   setFolderName('');
                   setFolderParent(null);
+                  setFolderParentMenuOpen(false);
                   setShowFolderModal(false);
                 }}
               >
@@ -1773,6 +1875,31 @@ export default function App() {
           {treeMenu.type === 'session' ? (
             <>
               <button
+                onClick={async () => {
+                  const target = sessions.find((s) => s.id === treeMenu.id);
+                  if (!target) {
+                    setTreeMenu(null);
+                    return;
+                  }
+                  const existingNames = new Set(sessions.map((item) => item.name));
+                  const copiedName = buildCopiedSessionName(target.name, existingNames);
+                  await window.terminalApi.createSession({
+                    folder_id: target.folder_id,
+                    name: copiedName,
+                    host: target.host,
+                    port: target.port,
+                    username: target.username,
+                    password: target.password,
+                    remember_password: target.remember_password,
+                    default_session: 0,
+                  });
+                  await loadSessionData();
+                  setTreeMenu(null);
+                }}
+              >
+                复制
+              </button>
+              <button
                 onClick={() => {
                   const target = sessions.find((s) => s.id === treeMenu.id);
                   if (target) openSessionModal(target);
@@ -1795,6 +1922,22 @@ export default function App() {
             </>
           ) : treeMenu.type === 'folder' ? (
             <>
+              <button
+                onClick={() => {
+                  openSessionModal(undefined, treeMenu.id);
+                  setTreeMenu(null);
+                }}
+              >
+                新增会话
+              </button>
+              <button
+                onClick={() => {
+                  openFolderModal(treeMenu.id);
+                  setTreeMenu(null);
+                }}
+              >
+                新增目录
+              </button>
               <button
                 onClick={async () => {
                   const name = await askPrompt('目录名称', treeMenu.name);
