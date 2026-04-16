@@ -103,7 +103,12 @@ const userDataPath = path.join(runtimeDir, 'user-data');
 const configPath = path.join(runtimeDir, 'config.json');
 const dbPath = path.join(runtimeDir, 'app.db');
 const windowStatePath = path.join(userDataPath, 'window-state.json');
-const preloadPath = path.join(appRoot, 'electron', 'preload.js');
+const preloadCandidates = [
+  path.join(appRoot, 'electron', 'preload.js'),
+  path.join(appRoot, 'dist-electron', 'electron', 'preload.js'),
+  path.join(__dirname, 'preload.js'),
+];
+const preloadPath = preloadCandidates.find((candidate) => fs.existsSync(candidate)) || preloadCandidates[0];
 
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
@@ -861,7 +866,7 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
 
 function createWindow() {
   if (!fs.existsSync(preloadPath)) {
-    throw new Error(`preload.js not found: ${preloadPath}`);
+    throw new Error(`preload.js not found. tried: ${preloadCandidates.join(' | ')}`);
   }
   const savedState = readWindowState();
   mainWindow = new BrowserWindow({

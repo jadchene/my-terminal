@@ -10,6 +10,7 @@
     "build": "vite build && npm run build:electron",
     "build:electron": "tsc -p tsconfig.electron.json",
     "pack:unpacked": "npm run build && electron-builder --dir --win",
+    "postpack:unpacked": "node -e \"const fs=require('fs');const path=require('path');const src=path.join('release','win-unpacked');const dst=path.join('release','my-terminal');if(fs.existsSync(dst)) fs.rmSync(dst,{recursive:true,force:true});if(fs.existsSync(src)) fs.renameSync(src,dst);\"",
     "preview": "vite preview",
     "start": "npm run build:electron && electron dist-electron/electron/main.js"
   },
@@ -24,6 +25,7 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "electron/preload.js",
       "package.json"
     ],
     "win": {
