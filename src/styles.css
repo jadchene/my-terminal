@@ -529,10 +529,6 @@ body,
   background: #ffffff;
 }
 
-.transfer-error .transfer-fill {
-  background: #ff6b6b;
-}
-
 .transfer-cancel-btn {
   min-width: 36px;
   height: 20px;
@@ -548,7 +544,7 @@ body,
   line-height: 20px;
   text-align: center;
   white-space: nowrap;
-  cursor: default;
+  cursor: pointer;
 }
 
 .transfer-cancel-btn:disabled {

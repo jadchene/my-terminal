@@ -65,6 +65,8 @@ type SftpBatchControl = {
   sessionId: number;
   connectionId: number;
   cancelled: boolean;
+  client?: any;
+  ownsClient?: boolean;
 };
 
 type SftpProgressThrottleState = {
@@ -138,6 +140,7 @@ const sshStateMap = new Map<number, SshConnectionState>();
 const sftpMap = new Map<number, any>();
 const sftpBatchControlMap = new Map<string, SftpBatchControl>();
 const sftpProgressThrottleMap = new Map<string, SftpProgressThrottleState>();
+const DEFAULT_TRANSFER_CONCURRENCY = Math.max(2, Math.min(8, Math.floor((os.cpus()?.length || 2) / 2)));
 const connectionSessionMap = new Map<number, Session>();
 const connectionHomeMap = new Map<number, string>();
 const pendingCwdProbeMap = new Map<number, PendingCwdProbe>();
@@ -165,6 +168,30 @@ type RemoteMetricsSnapshot = {
 };
 
 const remoteMetricsSnapshotMap = new Map<number, RemoteMetricsSnapshot>();
+type RemoteMetricsPayload = {
+  system: { version: string; arch: string };
+  cpu: number;
+  cpuName: string;
+  cpuCores: number;
+  memory: { usedGb: number; totalGb: number; percent: number };
+  network: { upload: number; download: number; ips: string[] };
+  disk: { totalGb: number; usedGb: number; percent: number; upload: number; download: number };
+  gpu:
+    | { available: false; items: [] }
+    | {
+        available: true;
+        items: Array<{
+          index: number;
+          name: string;
+          memoryUsedGb: number;
+          memoryTotalGb: number;
+          memoryPercent: number;
+          load: number;
+        }>;
+      };
+};
+const remoteMetricsPayloadMap = new Map<number, RemoteMetricsPayload>();
+const METRICS_FULL_SAMPLE_INTERVAL_MS = 5000;
 
 type WindowState = {
   x?: number;
@@ -355,11 +382,19 @@ function safeSend(channel: string, payload?: unknown) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const wc = mainWindow.webContents;
   if (wc.isDestroyed()) return;
-  if (payload === undefined) {
-    wc.send(channel);
-    return;
+  try {
+    if (payload === undefined) {
+      wc.send(channel);
+      return;
+    }
+    wc.send(channel, payload);
+  } catch (error) {
+    const message = String(error || '').toLowerCase();
+    if (message.includes('object has been destroyed') || message.includes('ipc') || message.includes('channel')) {
+      return;
+    }
+    console.warn('safeSend failed:', { channel, error });
   }
-  wc.send(channel, payload);
 }
 
 function run(sql: string, params: any[] = []): Promise<void> {
@@ -467,6 +502,17 @@ function emitSftpProgress(payload: SftpProgressPayload) {
   safeSend('sftp:progress', payload);
 }
 
+function emitSftpBatchError(payload: {
+  sessionId: number;
+  batchId: string;
+  direction: 'upload' | 'download';
+  name: string;
+  error: string;
+}) {
+  console.error('[sftp:batch-error]', payload);
+  safeSend('sftp:batch-error', payload);
+}
+
 function emitSftpProgressMaybe(payload: SftpProgressPayload, force = false) {
   const key = `${payload.sessionId}:${payload.batchId}:${payload.index}`;
   if (force) {
@@ -515,6 +561,50 @@ function assertBatchNotCancelled(control: SftpBatchControl) {
 
 function isBatchCancelledError(error: unknown): boolean {
   return error instanceof SftpBatchCancelledError;
+}
+
+async function runWithConcurrency(taskCount: number, concurrency: number, worker: (index: number) => Promise<void>): Promise<void> {
+  if (taskCount <= 0) return;
+  const limit = Math.max(1, Math.min(taskCount, concurrency));
+  let cursor = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= taskCount) break;
+      await worker(index);
+    }
+  });
+  await Promise.all(runners);
+}
+
+function isHandshakeLossError(error: unknown): boolean {
+  const message = String(error || '').toLowerCase();
+  return message.includes('connection lost before handshake') || message.includes('handshake');
+}
+
+async function createWorkerSftpClients(
+  session: Session,
+  desired: number,
+  onDegrade?: (actual: number, desiredTotal: number) => void,
+): Promise<any[]> {
+  const target = Math.max(1, desired);
+  const clients: any[] = [];
+  for (let i = 0; i < target; i += 1) {
+    try {
+      const client = await createStandaloneSftp(session);
+      clients.push(client);
+    } catch (error) {
+      // If handshake starts failing under high concurrency, degrade gracefully.
+      if (isHandshakeLossError(error) && clients.length > 0) {
+        onDegrade?.(clients.length, target);
+        break;
+      }
+      await Promise.all(clients.map(async (it) => it.end().catch(() => null)));
+      throw error;
+    }
+  }
+  return clients;
 }
 
 function getDefaultDownloadDir(): string {
@@ -598,6 +688,59 @@ async function collectUploadTasks(
   };
 
   await walk(localPath, rootRemoteDir);
+}
+
+async function ensureRemoteDirExists(client: any, remoteDir: string): Promise<void> {
+  if (!remoteDir || remoteDir === '.' || remoteDir === '/') return;
+  const normalized = toSftpPath(remoteDir).replace(/\/+$/, '') || '/';
+  if (normalized === '/') return;
+  let normalizedExistsType: any = false;
+  try {
+    normalizedExistsType = await client.exists(normalized);
+  } catch {
+    // Continue to create path when existence check is unavailable.
+  }
+  if (normalizedExistsType === 'd') return;
+  if (normalizedExistsType && normalizedExistsType !== false) {
+    throw new Error(`目标路径不是目录: ${normalized}`);
+  }
+
+  const isAbs = normalized.startsWith('/');
+  const segments = normalized.split('/').filter(Boolean);
+  let current = isAbs ? '/' : '';
+  for (const segment of segments) {
+    current = current === '/' ? `/${segment}` : current ? `${current}/${segment}` : segment;
+    let existsType: any = false;
+    try {
+      existsType = await client.exists(current);
+    } catch {
+      existsType = false;
+    }
+    if (existsType === 'd') continue;
+    if (existsType && existsType !== false) {
+      throw new Error(`目标路径不是目录: ${current}`);
+    }
+    try {
+      await client.mkdir(current, false);
+    } catch (error) {
+      const afterCreate = await client.exists(current).catch(() => false);
+      if (afterCreate !== 'd') throw error;
+    }
+  }
+}
+
+async function ensureRemoteDirsForUploadTasks(client: any, tasks: UploadTask[]): Promise<void> {
+  const dirs = Array.from(
+    new Set(
+      tasks
+        .map((task) => toSftpPath(path.posix.dirname(task.remotePath)))
+        .filter((dir) => !!dir && dir !== '.'),
+    ),
+  );
+  dirs.sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
+  for (const dir of dirs) {
+    await ensureRemoteDirExists(client, dir);
+  }
 }
 
 type DownloadTask = {
@@ -792,11 +935,32 @@ async function getOrCreateSftp(connectionId: number, session: Session): Promise<
     password: session.password,
     readyTimeout: 20000,
   });
+  const rawClient = (client as any)?.client;
+  if (rawClient && typeof rawClient.setMaxListeners === 'function') {
+    // Concurrent transfers can temporarily attach >10 listeners on ssh2 Client.
+    rawClient.setMaxListeners(64);
+  }
   const cwd = await client.cwd().catch(() => '');
   if (cwd && typeof cwd === 'string') {
     connectionHomeMap.set(connectionId, cwd.trim());
   }
   sftpMap.set(connectionId, client);
+  return client;
+}
+
+async function createStandaloneSftp(session: Session): Promise<any> {
+  const client = new SftpClient();
+  await client.connect({
+    host: session.host,
+    port: session.port,
+    username: session.username,
+    password: session.password,
+    readyTimeout: 20000,
+  });
+  const rawClient = (client as any)?.client;
+  if (rawClient && typeof rawClient.setMaxListeners === 'function') {
+    rawClient.setMaxListeners(64);
+  }
   return client;
 }
 
@@ -813,11 +977,17 @@ function requireConnected(connectionId: number) {
 }
 
 async function cleanupConnectionState(connectionId: number) {
+  const batchClientsToClose: any[] = [];
   for (const [, control] of sftpBatchControlMap) {
     if (control.connectionId === connectionId) {
       control.cancelled = true;
+      if (control.client && control.ownsClient) {
+        batchClientsToClose.push(control.client);
+        control.client = undefined;
+      }
     }
   }
+  await Promise.all(batchClientsToClose.map(async (it) => it.end().catch(() => null)));
   clearPendingCwdProbe(connectionId, new Error('连接已关闭'));
   clearPendingPwdCapture(connectionId, new Error('连接已关闭'));
   const sshState = sshStateMap.get(connectionId);
@@ -833,6 +1003,7 @@ async function cleanupConnectionState(connectionId: number) {
   connectionHomeMap.delete(connectionId);
   lastKnownCwdMap.delete(connectionId);
   remoteMetricsSnapshotMap.delete(connectionId);
+  remoteMetricsPayloadMap.delete(connectionId);
   if (metricsSessionId === connectionId) {
     metricsSessionId = null;
   }
@@ -852,10 +1023,16 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
   const connectionId = payload.sessionId;
   requireConnected(connectionId);
   const session = await getSessionForConnection(connectionId);
-  const client = await getOrCreateSftp(connectionId, session);
+  const client = await createStandaloneSftp(session);
   const remoteDir = await resolveRemotePath(client, payload.remoteDir);
   const batchId = createBatchId();
-  const control: SftpBatchControl = { sessionId: payload.sessionId, connectionId, cancelled: false };
+  const control: SftpBatchControl = {
+    sessionId: payload.sessionId,
+    connectionId,
+    cancelled: false,
+    client,
+    ownsClient: true,
+  };
   sftpBatchControlMap.set(batchId, control);
   emitSftpProgressMaybe(
     {
@@ -893,12 +1070,13 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
         },
         true,
       );
+      await ensureRemoteDirsForUploadTasks(client, tasks);
     }
-    for (let index = 0; index < tasks.length; index += 1) {
+    const concurrency = Math.max(1, Math.min(DEFAULT_TRANSFER_CONCURRENCY, tasks.length || 1));
+    await runWithConcurrency(tasks.length, concurrency, async (index) => {
       assertBatchNotCancelled(control);
       const task = tasks[index];
       try {
-        await client.mkdir(path.posix.dirname(task.remotePath), true);
         await client.fastPut(task.localPath, task.remotePath, {
           step: (transferred: number, _chunk: number, total: number) => {
             if (control.cancelled) return;
@@ -918,29 +1096,29 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
         successCount += 1;
         emitSftpProgressMaybe(
           {
-          sessionId: payload.sessionId,
-          batchId,
-          direction: 'upload',
-          index,
-          totalCount: tasks.length,
-          name: task.name,
-          transferred: task.size,
-          total: task.size,
+            sessionId: payload.sessionId,
+            batchId,
+            direction: 'upload',
+            index,
+            totalCount: tasks.length,
+            name: task.name,
+            transferred: task.size,
+            total: task.size,
           },
           true,
         );
       } catch (error) {
-        if (isBatchCancelledError(error) || control.cancelled) break;
+        if (isBatchCancelledError(error) || control.cancelled) return;
         failedCount += 1;
-        safeSend('sftp:batch-error', {
+        emitSftpBatchError({
           sessionId: payload.sessionId,
           batchId,
           direction: 'upload',
           name: task.name,
-          error: String(error),
+          error: `fastPut 失败: ${String(error)}`,
         });
       }
-    }
+    });
   } catch (error) {
     if (isBatchCancelledError(error) || control.cancelled) {
       safeSend('sftp:batch-complete', {
@@ -955,14 +1133,18 @@ async function runSftpUploadBatch(payload: { sessionId: number; remoteDir: strin
       return false;
     }
     failedCount += 1;
-    safeSend('sftp:batch-error', {
+    emitSftpBatchError({
       sessionId: payload.sessionId,
       batchId,
       direction: 'upload',
       name: 'batch',
-      error: String(error),
+      error: `上传批次失败: ${String(error)}`,
     });
   } finally {
+    if (control.client && control.ownsClient) {
+      await control.client.end().catch(() => null);
+      control.client = undefined;
+    }
     sftpBatchControlMap.delete(batchId);
     for (const [key] of sftpProgressThrottleMap) {
       if (key.includes(`:${batchId}:`)) sftpProgressThrottleMap.delete(key);
@@ -985,9 +1167,15 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
   const connectionId = payload.sessionId;
   requireConnected(connectionId);
   const session = await getSessionForConnection(connectionId);
-  const client = await getOrCreateSftp(connectionId, session);
+  const client = await createStandaloneSftp(session);
   const batchId = createBatchId();
-  const control: SftpBatchControl = { sessionId: payload.sessionId, connectionId, cancelled: false };
+  const control: SftpBatchControl = {
+    sessionId: payload.sessionId,
+    connectionId,
+    cancelled: false,
+    client,
+    ownsClient: true,
+  };
   sftpBatchControlMap.set(batchId, control);
   emitSftpProgressMaybe(
     {
@@ -1031,7 +1219,8 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
         true,
       );
     }
-    for (let index = 0; index < tasks.length; index += 1) {
+    const concurrency = Math.max(1, Math.min(DEFAULT_TRANSFER_CONCURRENCY, tasks.length || 1));
+    await runWithConcurrency(tasks.length, concurrency, async (index) => {
       assertBatchNotCancelled(control);
       const task = tasks[index];
       try {
@@ -1055,21 +1244,21 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
         successCount += 1;
         emitSftpProgressMaybe(
           {
-          sessionId: payload.sessionId,
-          batchId,
-          direction: 'download',
-          index,
-          totalCount: tasks.length,
-          name: task.name,
-          transferred: task.size,
-          total: task.size,
+            sessionId: payload.sessionId,
+            batchId,
+            direction: 'download',
+            index,
+            totalCount: tasks.length,
+            name: task.name,
+            transferred: task.size,
+            total: task.size,
           },
           true,
         );
       } catch (error) {
-        if (isBatchCancelledError(error) || control.cancelled) break;
+        if (isBatchCancelledError(error) || control.cancelled) return;
         failedCount += 1;
-        safeSend('sftp:batch-error', {
+        emitSftpBatchError({
           sessionId: payload.sessionId,
           batchId,
           direction: 'download',
@@ -1077,7 +1266,7 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
           error: String(error),
         });
       }
-    }
+    });
   } catch (error) {
     if (isBatchCancelledError(error) || control.cancelled) {
       safeSend('sftp:batch-complete', {
@@ -1092,7 +1281,7 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
       return false;
     }
     failedCount += 1;
-    safeSend('sftp:batch-error', {
+    emitSftpBatchError({
       sessionId: payload.sessionId,
       batchId,
       direction: 'download',
@@ -1100,6 +1289,10 @@ async function runSftpDownloadBatch(payload: { sessionId: number; remotePaths: s
       error: String(error),
     });
   } finally {
+    if (control.client && control.ownsClient) {
+      await control.client.end().catch(() => null);
+      control.client = undefined;
+    }
     sftpBatchControlMap.delete(batchId);
     for (const [key] of sftpProgressThrottleMap) {
       if (key.includes(`:${batchId}:`)) sftpProgressThrottleMap.delete(key);
@@ -1165,6 +1358,7 @@ function createWindow() {
 }
 
 function subscribeMetrics() {
+  let lastFullSampleAt = 0;
   metricsTimer = setInterval(async () => {
     if (!mainWindow || mainWindow.isDestroyed() || metricsCollecting) return;
     metricsCollecting = true;
@@ -1184,8 +1378,13 @@ function subscribeMetrics() {
           metricsInactiveSent = true;
         }
       } else {
-        const payload = await collectRemoteMetrics(metricsSessionId);
+        const now = Date.now();
+        const forceFullSample = now - lastFullSampleAt >= METRICS_FULL_SAMPLE_INTERVAL_MS;
+        const payload = await collectRemoteMetrics(metricsSessionId, forceFullSample);
         safeSend('system:metrics', payload);
+        if (forceFullSample) {
+          lastFullSampleAt = now;
+        }
         metricsInactiveSent = false;
       }
     } catch (error) {
@@ -1445,21 +1644,29 @@ function execOnSession(sessionId: number, command: string): Promise<string> {
   });
 }
 
-async function collectRemoteMetrics(sessionId: number) {
-  const script = [
-    'echo "__CPU__"; head -n1 /proc/stat 2>/dev/null || echo ""',
-    'echo "__CPUINFO__"; (cat /proc/cpuinfo 2>/dev/null || true)',
-    'echo "__LSCPU__"; (LANG=C LC_ALL=C lscpu 2>/dev/null || true)',
-    'echo "__CPUFREQ__"; (for f in /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_cur_freq /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_cur_freq; do [ -r "$f" ] && cat "$f"; done 2>/dev/null || true)',
-    'echo "__CPUFREQMAX__"; (for f in /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_max_freq /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do [ -r "$f" ] && cat "$f"; done 2>/dev/null || true)',
-    'echo "__SYS__"; (sh -c \'if [ -f /etc/os-release ]; then . /etc/os-release; echo "${PRETTY_NAME:-${NAME:-}}"; fi; uname -m 2>/dev/null\' || true)',
-    'echo "__MEM__"; (grep -E "MemTotal|MemAvailable" /proc/meminfo 2>/dev/null || true)',
-    'echo "__IP__"; ((hostname -I 2>/dev/null || true); (ip -o -4 addr show scope global 2>/dev/null | cut -d\' \' -f7 | cut -d/ -f1 || true))',
-    'echo "__NET__"; (cat /proc/net/dev 2>/dev/null || true)',
-    'echo "__DISK__"; (cat /proc/diskstats 2>/dev/null || true)',
-    'echo "__FS__"; (df -B1 -P -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null || true)',
-    'echo "__GPU__"; (command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits || true)',
-  ].join('; ');
+async function collectRemoteMetrics(sessionId: number, includeStaticSample = false): Promise<RemoteMetricsPayload> {
+  const cachedPayload = remoteMetricsPayloadMap.get(sessionId);
+  const shouldSampleStatic = includeStaticSample || !cachedPayload;
+  const script = shouldSampleStatic
+    ? [
+        'echo "__CPU__"; head -n1 /proc/stat 2>/dev/null || echo ""',
+        'echo "__CPUINFO__"; (cat /proc/cpuinfo 2>/dev/null || true)',
+        'echo "__LSCPU__"; (LANG=C LC_ALL=C lscpu 2>/dev/null || true)',
+        'echo "__SYS__"; (sh -c \'if [ -f /etc/os-release ]; then . /etc/os-release; echo "${PRETTY_NAME:-${NAME:-}}"; fi; uname -m 2>/dev/null\' || true)',
+        'echo "__MEM__"; (grep -E "MemTotal|MemAvailable" /proc/meminfo 2>/dev/null || true)',
+        'echo "__IP__"; ((hostname -I 2>/dev/null || true); (ip -o -4 addr show scope global 2>/dev/null | cut -d\' \' -f7 | cut -d/ -f1 || true))',
+        'echo "__NET__"; (cat /proc/net/dev 2>/dev/null || true)',
+        'echo "__DISK__"; (cat /proc/diskstats 2>/dev/null || true)',
+        'echo "__FS__"; (df -B1 -P -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null || true)',
+        'echo "__GPU__"; (command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits || true)',
+      ].join('; ')
+    : [
+        'echo "__CPU__"; head -n1 /proc/stat 2>/dev/null || echo ""',
+        'echo "__MEM__"; (grep -E "MemTotal|MemAvailable" /proc/meminfo 2>/dev/null || true)',
+        'echo "__IP__"; ((hostname -I 2>/dev/null || true); (ip -o -4 addr show scope global 2>/dev/null | cut -d\' \' -f7 | cut -d/ -f1 || true))',
+        'echo "__NET__"; (cat /proc/net/dev 2>/dev/null || true)',
+        'echo "__DISK__"; (cat /proc/diskstats 2>/dev/null || true)',
+      ].join('; ');
 
   const output = await execOnSession(sessionId, script);
   const lines = output.split(/\r?\n/);
@@ -1505,7 +1712,6 @@ async function collectRemoteMetrics(sessionId: number) {
   const netStat = parseNet(section.NET);
   const diskStat = parseDisk(section.DISK);
   const fsUsage = parseFsUsage(section.FS);
-  const gpuStat = parseGpu(section.GPU);
 
   const now = Date.now();
   const prev = remoteMetricsSnapshotMap.get(sessionId);
@@ -1537,31 +1743,54 @@ async function collectRemoteMetrics(sessionId: number) {
   });
 
   const memUsed = Math.max(memStat.total - memStat.available, 0);
-  const cpuName = cpuInfo.name || cpuInfoLscpu.name || (systemInfo.arch ? `CPU (${systemInfo.arch})` : 'CPU');
-  return {
-    system: systemInfo,
+  const system = systemInfo.version || systemInfo.arch
+    ? systemInfo
+    : (cachedPayload?.system || { version: '', arch: '' });
+  const cpuName =
+    cpuInfo.name || cpuInfoLscpu.name || cachedPayload?.cpuName || (system.arch ? `CPU (${system.arch})` : 'CPU');
+  const cpuCores = cpuCoreCount || cachedPayload?.cpuCores || 0;
+  const memoryTotalGb = memStat.total
+    ? Number((memStat.total / 1024 / 1024 / 1024).toFixed(2))
+    : (cachedPayload?.memory.totalGb || 0);
+  const diskTotalGb = fsUsage.total
+    ? Number((fsUsage.total / 1024 / 1024 / 1024).toFixed(2))
+    : (cachedPayload?.disk.totalGb || 0);
+  const diskUsedGb = fsUsage.used
+    ? Number((fsUsage.used / 1024 / 1024 / 1024).toFixed(2))
+    : (cachedPayload?.disk.usedGb || 0);
+  const diskPercent = fsUsage.total
+    ? Number(fsUsage.percent.toFixed(1))
+    : (cachedPayload?.disk.percent || 0);
+  const gpu: RemoteMetricsPayload['gpu'] = section.GPU.length > 0
+    ? (parseGpu(section.GPU) as RemoteMetricsPayload['gpu'])
+    : (cachedPayload?.gpu || { available: false, items: [] });
+
+  const payload: RemoteMetricsPayload = {
+    system,
     cpu,
     cpuName,
-    cpuCores: cpuCoreCount,
+    cpuCores,
     memory: {
       usedGb: Number((memUsed / 1024 / 1024 / 1024).toFixed(2)),
-      totalGb: Number((memStat.total / 1024 / 1024 / 1024).toFixed(2)),
-      percent: memStat.total ? Number(((memUsed / memStat.total) * 100).toFixed(1)) : 0,
+      totalGb: memoryTotalGb,
+      percent: memStat.total ? Number(((memUsed / memStat.total) * 100).toFixed(1)) : (cachedPayload?.memory.percent || 0),
     },
     network: {
       upload: Number(netUpload.toFixed(0)),
       download: Number(netDownload.toFixed(0)),
-      ips,
+      ips: ips.length > 0 ? ips : (cachedPayload?.network.ips || []),
     },
     disk: {
-      totalGb: Number((fsUsage.total / 1024 / 1024 / 1024).toFixed(2)),
-      usedGb: Number((fsUsage.used / 1024 / 1024 / 1024).toFixed(2)),
-      percent: Number(fsUsage.percent.toFixed(1)),
+      totalGb: diskTotalGb,
+      usedGb: diskUsedGb,
+      percent: diskPercent,
       upload: Number(diskWrite.toFixed(0)),
       download: Number(diskRead.toFixed(0)),
     },
-    gpu: gpuStat,
+    gpu,
   };
+  remoteMetricsPayloadMap.set(sessionId, payload);
+  return payload;
 }
 
 function registerIpc() {
@@ -1870,7 +2099,13 @@ function registerIpc() {
         owner: item.owner,
         group: item.group,
         longname: item.longname,
-      }));
+      }))
+      .sort((a: { type: string; name: string }, b: { type: string; name: string }) => {
+        const aDir = a.type === 'd' ? 0 : 1;
+        const bDir = b.type === 'd' ? 0 : 1;
+        if (aDir !== bDir) return aDir - bDir;
+        return a.name.localeCompare(b.name, 'zh-Hans-CN', { sensitivity: 'base', numeric: true });
+      });
   });
   ipcMain.handle('sftp:home', async (_, sessionId: number) => {
     requireConnected(sessionId);
@@ -1942,14 +2177,13 @@ function registerIpc() {
     const batch = sftpBatchControlMap.get(payload.batchId);
     if (!batch || batch.sessionId !== payload.sessionId) return false;
     batch.cancelled = true;
-    const sftp = sftpMap.get(batch.connectionId);
-    if (sftp) {
+    if (batch.client && batch.ownsClient) {
       try {
-        await sftp.end();
+        await batch.client.end();
       } catch {
         // Ignore close errors when cancelling transfer.
       }
-      sftpMap.delete(batch.connectionId);
+      batch.client = undefined;
     }
     return true;
   });
@@ -1994,6 +2228,8 @@ app.on('before-quit', async () => {
   connectionSessionMap.clear();
   connectionHomeMap.clear();
   lastKnownCwdMap.clear();
+  remoteMetricsPayloadMap.clear();
+  remoteMetricsSnapshotMap.clear();
   for (const [connectionId] of pendingCwdProbeMap) {
     clearPendingCwdProbe(connectionId, new Error('应用即将退出'));
   }

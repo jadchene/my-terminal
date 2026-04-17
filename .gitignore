@@ -1,6 +1,7 @@
 node_modules
 dist
 dist-electron
+electron/main.js
 release
 *.log
 config.json

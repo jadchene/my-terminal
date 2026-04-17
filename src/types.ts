@@ -130,6 +130,11 @@ export type SftpTransferError = {
   error: string;
 };
 
+export type TreeContextMenu =
+  | { x: number; y: number; type: 'session'; id: number; name: string }
+  | { x: number; y: number; type: 'folder'; id: number; name: string }
+  | { x: number; y: number; type: 'sftp'; sessionId: number; path: string; name: string; isDir: boolean };
+
 declare global {
   interface Window {
     terminalApi: {
