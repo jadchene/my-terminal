@@ -5,6 +5,7 @@ import os from 'node:os';
 import { Client } from 'ssh2';
 import SftpClient from 'ssh2-sftp-client';
 import sqlite3 from 'sqlite3';
+import keytar from 'keytar';
 
 type AppSettings = {
   theme: {
@@ -149,6 +150,8 @@ let metricsCollecting = false;
 let metricsSessionId: number | null = null;
 let metricsInactiveSent = false;
 const SETTINGS_KEY = 'app_settings';
+const PASSWORD_MIGRATION_KEY = 'session_password_keytar_migrated';
+const KEYTAR_SERVICE = 'my-terminal.session-password';
 let settingsCache: AppSettings = defaultSettings;
 
 type RemoteMetricsSnapshot = {
@@ -393,6 +396,55 @@ function get<T>(sql: string, params: any[] = []): Promise<T | undefined> {
       resolve(row as T | undefined);
     });
   });
+}
+
+function toKeytarAccount(sessionId: number): string {
+  return `session:${sessionId}`;
+}
+
+async function readAppSetting(key: string): Promise<string | null> {
+  const row = await get<{ value: string }>('SELECT value FROM app_setting WHERE key = ?', [key]);
+  if (!row?.value) return null;
+  return String(row.value);
+}
+
+async function writeAppSetting(key: string, value: string): Promise<void> {
+  await run(
+    `INSERT INTO app_setting(key, value)
+     VALUES(?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, value],
+  );
+}
+
+async function getSessionPasswordFromKeytar(sessionId: number): Promise<string | null> {
+  return keytar.getPassword(KEYTAR_SERVICE, toKeytarAccount(sessionId));
+}
+
+async function setSessionPasswordToKeytar(sessionId: number, password: string): Promise<void> {
+  await keytar.setPassword(KEYTAR_SERVICE, toKeytarAccount(sessionId), password);
+}
+
+async function deleteSessionPasswordFromKeytar(sessionId: number): Promise<void> {
+  await keytar.deletePassword(KEYTAR_SERVICE, toKeytarAccount(sessionId));
+}
+
+function toPublicSession(session: Session): Session {
+  return {
+    ...session,
+    password: '',
+  };
+}
+
+async function hydrateSessionPassword(session: Session): Promise<Session> {
+  if (session.remember_password !== 1) {
+    return { ...session, password: '' };
+  }
+  const fromKeytar = await getSessionPasswordFromKeytar(session.id);
+  if (fromKeytar != null) {
+    return { ...session, password: fromKeytar };
+  }
+  return { ...session, password: String(session.password || '') };
 }
 
 function toSftpPath(input: string): string {
@@ -653,6 +705,22 @@ async function saveSettings(nextSettings: AppSettings) {
   );
 }
 
+async function migrateSessionPasswordsToKeytarIfNeeded() {
+  const flag = await readAppSetting(PASSWORD_MIGRATION_KEY);
+  if (flag === '1') return;
+  const sessions = await all<Session>('SELECT * FROM session');
+  for (const session of sessions) {
+    const plainPassword = String(session.password || '');
+    if (session.remember_password === 1 && plainPassword) {
+      await setSessionPasswordToKeytar(session.id, plainPassword);
+    } else {
+      await deleteSessionPasswordFromKeytar(session.id);
+    }
+    await run('UPDATE session SET password = ? WHERE id = ?', ['', session.id]);
+  }
+  await writeAppSetting(PASSWORD_MIGRATION_KEY, '1');
+}
+
 async function initStorage() {
   await run(
     `CREATE TABLE IF NOT EXISTS session_folder (
@@ -687,9 +755,10 @@ async function initStorage() {
     } catch {
       await saveSettings(defaultSettings);
     }
-    return;
+  } else {
+    await saveSettings(defaultSettings);
   }
-  await saveSettings(defaultSettings);
+  await migrateSessionPasswordsToKeytarIfNeeded();
 }
 
 async function loadSession(sessionId: number): Promise<Session> {
@@ -697,7 +766,7 @@ async function loadSession(sessionId: number): Promise<Session> {
   if (!session) {
     throw new Error('会话不存在');
   }
-  return session;
+  return hydrateSessionPassword(session);
 }
 
 async function getOrCreateSftp(connectionId: number, session: Session): Promise<any> {
@@ -1420,7 +1489,10 @@ function registerIpc() {
     return true;
   });
 
-  ipcMain.handle('session:list', async () => all('SELECT * FROM session ORDER BY id ASC'));
+  ipcMain.handle('session:list', async () => {
+    const list = await all<Session>('SELECT * FROM session ORDER BY id ASC');
+    return list.map(toPublicSession);
+  });
   ipcMain.handle(
     'session:create',
     async (_, payload: Omit<Session, 'id'>) => {
@@ -1436,11 +1508,21 @@ function registerIpc() {
           payload.host,
           payload.port,
           payload.username,
-          payload.password,
+          '',
           payload.remember_password,
           payload.default_session,
         ],
       );
+      const inserted = await get<{ id: number }>('SELECT last_insert_rowid() AS id');
+      const sessionId = Number(inserted?.id || 0);
+      if (sessionId > 0) {
+        const trimmedPassword = String(payload.password || '').trim();
+        if (payload.remember_password === 1 && trimmedPassword) {
+          await setSessionPasswordToKeytar(sessionId, trimmedPassword);
+        } else {
+          await deleteSessionPasswordFromKeytar(sessionId);
+        }
+      }
       return true;
     },
   );
@@ -1458,16 +1540,23 @@ function registerIpc() {
         payload.host,
         payload.port,
         payload.username,
-        payload.password,
+        '',
         payload.remember_password,
         payload.default_session,
         payload.id,
       ],
     );
+    const trimmedPassword = String(payload.password || '').trim();
+    if (payload.remember_password !== 1) {
+      await deleteSessionPasswordFromKeytar(payload.id);
+    } else if (trimmedPassword) {
+      await setSessionPasswordToKeytar(payload.id, trimmedPassword);
+    }
     return true;
   });
   ipcMain.handle('session:delete', async (_, sessionId: number) => {
     await run('DELETE FROM session WHERE id = ?', [sessionId]);
+    await deleteSessionPasswordFromKeytar(sessionId);
     return true;
   });
 
@@ -1544,7 +1633,11 @@ function registerIpc() {
               });
             });
             if (savePassword) {
-              run('UPDATE session SET password = ?, remember_password = 1 WHERE id = ?', [connectPayload.password, profileSessionId])
+              const latestPassword = String(connectPayload.password || '');
+              Promise.all([
+                setSessionPasswordToKeytar(profileSessionId, latestPassword),
+                run('UPDATE session SET password = ?, remember_password = 1 WHERE id = ?', ['', profileSessionId]),
+              ])
                 .then(() => ok())
                 .catch((dbErr) => fail(dbErr));
               return;

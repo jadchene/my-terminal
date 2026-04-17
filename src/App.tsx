@@ -831,7 +831,7 @@ export default function App() {
         host: target.host,
         port: target.port,
         username: target.username,
-        password: target.password,
+        password: '',
         remember_password: target.remember_password,
         default_session: target.default_session,
       });
@@ -1725,18 +1725,20 @@ export default function App() {
               密码
               <div className="password-field">
                 <input
-                  type={showSessionPassword ? 'text' : 'password'}
+                  type={!editingSession && showSessionPassword ? 'text' : 'password'}
                   value={sessionForm.password}
                   onChange={(e) => setSessionForm({ ...sessionForm, password: e.target.value })}
                 />
-                <button
-                  type="button"
-                  className="password-toggle-btn"
-                  title={showSessionPassword ? '隐藏密码' : '显示密码'}
-                  onClick={() => setShowSessionPassword((v) => !v)}
-                >
-                  {showSessionPassword ? <EyeOff size={14} strokeWidth={1.8} /> : <Eye size={14} strokeWidth={1.8} />}
-                </button>
+                {!editingSession && (
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    title={showSessionPassword ? '隐藏密码' : '显示密码'}
+                    onClick={() => setShowSessionPassword((v) => !v)}
+                  >
+                    {showSessionPassword ? <EyeOff size={14} strokeWidth={1.8} /> : <Eye size={14} strokeWidth={1.8} />}
+                  </button>
+                )}
               </div>
             </label>
             <label>
@@ -2213,7 +2215,7 @@ export default function App() {
                     host: target.host,
                     port: target.port,
                     username: target.username,
-                    password: target.password,
+                    password: '',
                     remember_password: target.remember_password,
                     default_session: 0,
                   });
