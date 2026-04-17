@@ -1172,12 +1172,13 @@ function subscribeMetrics() {
       if (!metricsSessionId || !sshStateMap.has(metricsSessionId)) {
         if (!metricsInactiveSent) {
           safeSend('system:metrics', {
+            system: { version: '', arch: '' },
             cpu: 0,
+            cpuName: '',
             cpuCores: 0,
-            cpuMhz: 0,
             memory: { usedGb: 0, totalGb: 0, percent: 0 },
-            network: { upload: 0, download: 0 },
-            disk: { upload: 0, download: 0 },
+            network: { upload: 0, download: 0, ips: [] },
+            disk: { totalGb: 0, usedGb: 0, percent: 0, upload: 0, download: 0 },
             gpu: { available: false, items: [] },
           });
           metricsInactiveSent = true;
@@ -1191,12 +1192,13 @@ function subscribeMetrics() {
       // Keep metrics loop alive even if a probe fails once.
       if (!metricsInactiveSent) {
         safeSend('system:metrics', {
+          system: { version: '', arch: '' },
           cpu: 0,
+          cpuName: '',
           cpuCores: 0,
-          cpuMhz: 0,
           memory: { usedGb: 0, totalGb: 0, percent: 0 },
-          network: { upload: 0, download: 0 },
-          disk: { upload: 0, download: 0 },
+          network: { upload: 0, download: 0, ips: [] },
+          disk: { totalGb: 0, usedGb: 0, percent: 0, upload: 0, download: 0 },
           gpu: { available: false, items: [] },
         });
         metricsInactiveSent = true;
@@ -1214,22 +1216,40 @@ function parseCpu(line: string): { total: number; idle: number } {
   return { total, idle };
 }
 
-function parseCpuInfo(lines: string[]): { cores: number; mhz: number } {
+function parseCpuInfo(lines: string[]): { name: string; cores: number; mhz: number } {
   let cores = 0;
+  let name = '';
   const mhzValues: number[] = [];
+  const looksLikeCpuName = (input: string) => /[a-zA-Z\u4e00-\u9fa5]/.test(String(input || '').trim());
   for (const line of lines) {
+    const matched = line.match(/:\s*(.+)$/);
+    const lineKey = line.split(':')[0]?.trim().toLowerCase() || '';
+    const lineValue = matched?.[1]?.trim() || '';
+    if (!name && lineValue && looksLikeCpuName(lineValue)) {
+      if (
+        lineKey === 'model name' ||
+        lineKey === 'hardware' ||
+        lineKey === 'cpu' ||
+        lineKey === 'model'
+      ) {
+        name = lineValue;
+      } else if (lineKey === 'processor') {
+        // Some ARM distros may put a textual CPU name in "processor".
+        name = lineValue;
+      }
+    }
     if (line.startsWith('processor')) {
       cores += 1;
     }
-    if (line.startsWith('cpu MHz')) {
-      const matched = line.match(/:\s*([0-9.]+)/);
-      if (matched?.[1]) {
-        mhzValues.push(Number(matched[1]) || 0);
+    if (lineKey === 'cpu mhz' || lineKey === 'clock') {
+      const parsed = Number(lineValue.replace(/[^0-9.]/g, '')) || 0;
+      if (parsed > 0) {
+        mhzValues.push(parsed);
       }
     }
   }
   const mhz = mhzValues.length > 0 ? mhzValues.reduce((acc, n) => acc + n, 0) / mhzValues.length : 0;
-  return { cores, mhz: Number(mhz.toFixed(0)) };
+  return { name, cores, mhz: Number(mhz.toFixed(0)) };
 }
 
 function parseMem(lines: string[]): { total: number; available: number } {
@@ -1277,6 +1297,27 @@ function parseDisk(lines: string[]): { readBytes: number; writeBytes: number } {
   return { readBytes: readSectors * 512, writeBytes: writeSectors * 512 };
 }
 
+function parseFsUsage(lines: string[]): { total: number; used: number; percent: number } {
+  let total = 0;
+  let used = 0;
+  const seenFs = new Set<string>();
+  for (const raw of lines) {
+    const line = String(raw || '').trim();
+    if (!line || line.toLowerCase().startsWith('filesystem')) continue;
+    const fields = line.split(/\s+/);
+    if (fields.length < 6) continue;
+    const fsName = fields[0];
+    // Keep persistent block devices, skip temporary/virtual mounts.
+    if (!fsName.startsWith('/dev/')) continue;
+    if (seenFs.has(fsName)) continue;
+    seenFs.add(fsName);
+    total += Number(fields[1]) || 0;
+    used += Number(fields[2]) || 0;
+  }
+  const percent = total > 0 ? Number(((used / total) * 100).toFixed(1)) : 0;
+  return { total, used, percent };
+}
+
 function parseGpu(lines: string[]) {
   const items = lines
     .map((line, index) => {
@@ -1302,6 +1343,76 @@ function parseGpu(lines: string[]) {
     available: items.length > 0,
     items,
   } as const;
+}
+
+function parseSystem(lines: string[]): { version: string; arch: string } {
+  const nonEmpty = lines
+    .map((line) => String(line || '').trim().replace(/^"+|"+$/g, ''))
+    .filter((line) => !!line);
+  return {
+    version: nonEmpty[0] || '',
+    arch: nonEmpty[1] || '',
+  };
+}
+
+function parseCpuInfoFromLscpu(lines: string[]): { name: string; mhz: number } {
+  let name = '';
+  let mhz = 0;
+  for (const raw of lines) {
+    const line = String(raw || '').trim();
+    if (!line || !line.includes(':')) continue;
+    const [k, ...rest] = line.split(':');
+    const key = String(k || '').trim().toLowerCase();
+    const value = rest.join(':').trim();
+    if (!name && (key === 'model name' || key === 'model' || key === 'cpu')) {
+      if (/[a-zA-Z\u4e00-\u9fa5]/.test(value)) {
+        name = value;
+      }
+    }
+    if (!mhz && (key === 'cpu mhz' || key === 'cpu max mhz' || key === 'max mhz' || key.includes('mhz'))) {
+      const parsed = Number(value.replace(/[^0-9.]/g, '')) || 0;
+      if (parsed > 0) mhz = parsed;
+    }
+  }
+  return { name, mhz: Number(mhz.toFixed(0)) };
+}
+
+function parseCpuFreqMhz(lines: string[]): number {
+  const values: number[] = [];
+  for (const raw of lines) {
+    const val = Number(String(raw || '').trim().replace(/[^0-9.]/g, '')) || 0;
+    if (val <= 0) continue;
+    // cpufreq files usually return kHz.
+    values.push(val > 10000 ? val / 1000 : val);
+  }
+  if (values.length === 0) return 0;
+  const avg = values.reduce((acc, n) => acc + n, 0) / values.length;
+  return Number(avg.toFixed(0));
+}
+
+function parseCpuFreqMaxMhz(lines: string[]): number {
+  let max = 0;
+  for (const raw of lines) {
+    const val = Number(String(raw || '').trim().replace(/[^0-9.]/g, '')) || 0;
+    if (val <= 0) continue;
+    const mhz = val > 10000 ? val / 1000 : val;
+    if (mhz > max) max = mhz;
+  }
+  return Number(max.toFixed(0));
+}
+
+function parseCoreCount(lines: string[]): number {
+  const first = lines.find((line) => /^cpu\(s\)\s*:/i.test(String(line || '').trim()));
+  if (!first) return 0;
+  const value = String(first).split(':').slice(1).join(':').trim();
+  return Number(value.replace(/[^0-9]/g, '')) || 0;
+}
+
+function parseIps(lines: string[]): string[] {
+  const text = lines.join(' ');
+  const matched = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || [];
+  const unique = Array.from(new Set(matched.filter((ip) => ip !== '127.0.0.1')));
+  return unique.length > 0 ? [unique[0]] : [];
 }
 
 function execOnSession(sessionId: number, command: string): Promise<string> {
@@ -1338,9 +1449,15 @@ async function collectRemoteMetrics(sessionId: number) {
   const script = [
     'echo "__CPU__"; head -n1 /proc/stat 2>/dev/null || echo ""',
     'echo "__CPUINFO__"; (cat /proc/cpuinfo 2>/dev/null || true)',
+    'echo "__LSCPU__"; (LANG=C LC_ALL=C lscpu 2>/dev/null || true)',
+    'echo "__CPUFREQ__"; (for f in /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_cur_freq /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_cur_freq; do [ -r "$f" ] && cat "$f"; done 2>/dev/null || true)',
+    'echo "__CPUFREQMAX__"; (for f in /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_max_freq /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do [ -r "$f" ] && cat "$f"; done 2>/dev/null || true)',
+    'echo "__SYS__"; (sh -c \'if [ -f /etc/os-release ]; then . /etc/os-release; echo "${PRETTY_NAME:-${NAME:-}}"; fi; uname -m 2>/dev/null\' || true)',
     'echo "__MEM__"; (grep -E "MemTotal|MemAvailable" /proc/meminfo 2>/dev/null || true)',
+    'echo "__IP__"; ((hostname -I 2>/dev/null || true); (ip -o -4 addr show scope global 2>/dev/null | cut -d\' \' -f7 | cut -d/ -f1 || true))',
     'echo "__NET__"; (cat /proc/net/dev 2>/dev/null || true)',
     'echo "__DISK__"; (cat /proc/diskstats 2>/dev/null || true)',
+    'echo "__FS__"; (df -B1 -P -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null || true)',
     'echo "__GPU__"; (command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits || true)',
   ].join('; ');
 
@@ -1349,18 +1466,30 @@ async function collectRemoteMetrics(sessionId: number) {
   const section: Record<string, string[]> = {
     CPU: [],
     CPUINFO: [],
+    LSCPU: [],
+    CPUFREQ: [],
+    CPUFREQMAX: [],
+    SYS: [],
     MEM: [],
+    IP: [],
     NET: [],
     DISK: [],
+    FS: [],
     GPU: [],
   };
   let current: keyof typeof section | null = null;
   for (const line of lines) {
     if (line === '__CPU__') current = 'CPU';
     else if (line === '__CPUINFO__') current = 'CPUINFO';
+    else if (line === '__LSCPU__') current = 'LSCPU';
+    else if (line === '__CPUFREQ__') current = 'CPUFREQ';
+    else if (line === '__CPUFREQMAX__') current = 'CPUFREQMAX';
+    else if (line === '__SYS__') current = 'SYS';
     else if (line === '__MEM__') current = 'MEM';
+    else if (line === '__IP__') current = 'IP';
     else if (line === '__NET__') current = 'NET';
     else if (line === '__DISK__') current = 'DISK';
+    else if (line === '__FS__') current = 'FS';
     else if (line === '__GPU__') current = 'GPU';
     else if (current) section[current].push(line);
   }
@@ -1368,9 +1497,14 @@ async function collectRemoteMetrics(sessionId: number) {
   const cpuLine = section.CPU[0] || '';
   const cpuStat = parseCpu(cpuLine);
   const cpuInfo = parseCpuInfo(section.CPUINFO);
+  const cpuInfoLscpu = parseCpuInfoFromLscpu(section.LSCPU);
+  const cpuCoreCount = cpuInfo.cores || parseCoreCount(section.LSCPU);
+  const systemInfo = parseSystem(section.SYS);
   const memStat = parseMem(section.MEM);
+  const ips = parseIps(section.IP);
   const netStat = parseNet(section.NET);
   const diskStat = parseDisk(section.DISK);
+  const fsUsage = parseFsUsage(section.FS);
   const gpuStat = parseGpu(section.GPU);
 
   const now = Date.now();
@@ -1403,10 +1537,12 @@ async function collectRemoteMetrics(sessionId: number) {
   });
 
   const memUsed = Math.max(memStat.total - memStat.available, 0);
+  const cpuName = cpuInfo.name || cpuInfoLscpu.name || (systemInfo.arch ? `CPU (${systemInfo.arch})` : 'CPU');
   return {
+    system: systemInfo,
     cpu,
-    cpuCores: cpuInfo.cores,
-    cpuMhz: cpuInfo.mhz,
+    cpuName,
+    cpuCores: cpuCoreCount,
     memory: {
       usedGb: Number((memUsed / 1024 / 1024 / 1024).toFixed(2)),
       totalGb: Number((memStat.total / 1024 / 1024 / 1024).toFixed(2)),
@@ -1415,8 +1551,12 @@ async function collectRemoteMetrics(sessionId: number) {
     network: {
       upload: Number(netUpload.toFixed(0)),
       download: Number(netDownload.toFixed(0)),
+      ips,
     },
     disk: {
+      totalGb: Number((fsUsage.total / 1024 / 1024 / 1024).toFixed(2)),
+      usedGb: Number((fsUsage.used / 1024 / 1024 / 1024).toFixed(2)),
+      percent: Number(fsUsage.percent.toFixed(1)),
       upload: Number(diskWrite.toFixed(0)),
       download: Number(diskRead.toFixed(0)),
     },

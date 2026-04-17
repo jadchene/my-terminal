@@ -641,7 +641,7 @@ body,
   font-family: inherit;
   font-size: inherit;
   line-height: 1.65;
-  white-space: nowrap;
+  white-space: normal;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -675,6 +675,31 @@ body,
 
 .gpu-item:last-child {
   margin-bottom: 0;
+}
+
+.status-kv {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 6px;
+}
+
+.status-kv-label {
+  white-space: nowrap;
+}
+
+.status-kv-label::after {
+  content: ':';
+}
+
+.status-kv-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.status-multi-line {
+  display: block;
 }
 
 .modal-mask {

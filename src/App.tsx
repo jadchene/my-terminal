@@ -94,6 +94,14 @@ function formatBytes(value: number): string {
   return `${value} B`;
 }
 
+function formatCapacity(valueGb: number): string {
+  const value = Number(valueGb || 0);
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(2)}TB`;
+  }
+  return `${value.toFixed(2)}GB`;
+}
+
 type TransferRow = {
   key: string;
   batchId: string;
@@ -112,6 +120,15 @@ function formatSftpMeta(item: SftpItem) {
   const rights = item.rights ? `${item.rights.user}${item.rights.group}${item.rights.other}` : '-';
   const timeText = item.modifyTime ? new Date(item.modifyTime).toLocaleString() : '-';
   return `权限: ${rights}\n大小: ${formatBytes(item.size || 0)}\n时间: ${timeText}`;
+}
+
+function renderStatusRow(label: string, value: string) {
+  return (
+    <div className="status-kv">
+      <span className="status-kv-label">{label}</span>
+      <span className="status-kv-value">{value || '--'}</span>
+    </div>
+  );
 }
 
 function getParentSftpPath(current: string): string {
@@ -1608,26 +1625,39 @@ export default function App() {
                 {activeSessionId && currentMetrics ? (
                   <>
                     <div className="status-group">
+                      <div className="status-title">系统</div>
+                      {renderStatusRow('版本', currentMetrics.system.version || '--')}
+                      {renderStatusRow('架构', currentMetrics.system.arch || '--')}
+                    </div>
+                    <div className="status-group">
                       <div className="status-title">CPU</div>
-                      <div>占用: {currentMetrics.cpu}%</div>
-                      <div>核心: {currentMetrics.cpuCores || '--'}</div>
-                      <div>主频: {currentMetrics.cpuMhz ? `${currentMetrics.cpuMhz} MHz` : '--'}</div>
+                      {renderStatusRow('名称', currentMetrics.cpuName || '--')}
+                      {renderStatusRow('占用', `${currentMetrics.cpu}%`)}
+                      {renderStatusRow('核心', String(currentMetrics.cpuCores || '--'))}
                     </div>
                     <div className="status-group">
                       <div className="status-title">内存</div>
-                      <div>
-                        占用: {currentMetrics.memory.usedGb}GB / {currentMetrics.memory.totalGb}GB ({currentMetrics.memory.percent}%)
-                      </div>
+                      {renderStatusRow(
+                        '占用',
+                        `${formatCapacity(currentMetrics.memory.usedGb)} / ${formatCapacity(currentMetrics.memory.totalGb)} (${currentMetrics.memory.percent}%)`,
+                      )}
                     </div>
                     <div className="status-group">
                       <div className="status-title">网络</div>
-                      <div>上传: {formatSpeed(currentMetrics.network.upload)}</div>
-                      <div>下载: {formatSpeed(currentMetrics.network.download)}</div>
+                      {renderStatusRow('IP', currentMetrics.network.ips[0] || '--')}
+                      {renderStatusRow('上传', formatSpeed(currentMetrics.network.upload))}
+                      {renderStatusRow('下载', formatSpeed(currentMetrics.network.download))}
                     </div>
                     <div className="status-group">
                       <div className="status-title">硬盘</div>
-                      <div>写入: {formatSpeed(currentMetrics.disk.upload)}</div>
-                      <div>读取: {formatSpeed(currentMetrics.disk.download)}</div>
+                      {renderStatusRow(
+                        '占用',
+                        currentMetrics.disk.totalGb > 0
+                          ? `${formatCapacity(currentMetrics.disk.usedGb)} / ${formatCapacity(currentMetrics.disk.totalGb)} (${currentMetrics.disk.percent}%)`
+                          : '--',
+                      )}
+                      {renderStatusRow('写入', formatSpeed(currentMetrics.disk.upload))}
+                      {renderStatusRow('读取', formatSpeed(currentMetrics.disk.download))}
                     </div>
                     <div className="status-group">
                       <div className="status-title">GPU</div>
@@ -1635,14 +1665,14 @@ export default function App() {
                         <>
                           {currentMetrics.gpu.items.map((gpu) => (
                             <div key={`${gpu.index}-${gpu.name}`} className="gpu-item">
-                              <div>GPU{gpu.index}: {gpu.name}</div>
-                              <div>显存: {gpu.memoryUsedGb}GB / {gpu.memoryTotalGb}GB ({gpu.memoryPercent}%)</div>
-                              <div>负载: {gpu.load}%</div>
+                              {renderStatusRow(`GPU${gpu.index}`, gpu.name)}
+                              {renderStatusRow('显存', `${gpu.memoryUsedGb}GB / ${gpu.memoryTotalGb}GB (${gpu.memoryPercent}%)`)}
+                              {renderStatusRow('负载', `${gpu.load}%`)}
                             </div>
                           ))}
                         </>
                       ) : (
-                        <div>无</div>
+                        <div className="status-kv-value">无</div>
                       )}
                     </div>
                   </>

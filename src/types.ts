@@ -43,9 +43,13 @@ export type Session = {
 };
 
 export type Metrics = {
+  system: {
+    version: string;
+    arch: string;
+  };
   cpu: number;
+  cpuName: string;
   cpuCores: number;
-  cpuMhz: number;
   memory: {
     usedGb: number;
     totalGb: number;
@@ -54,8 +58,12 @@ export type Metrics = {
   network: {
     upload: number;
     download: number;
+    ips: string[];
   };
   disk: {
+    totalGb: number;
+    usedGb: number;
+    percent: number;
     upload: number;
     download: number;
   };
