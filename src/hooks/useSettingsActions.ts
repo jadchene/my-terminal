@@ -82,6 +82,10 @@ export function useSettingsActions(params: UseSettingsActionsParams) {
         terminalCursorBlink: settingsDraft.theme.terminalCursorBlink ?? true,
         terminalCursorWidth: Math.max(1, Math.min(8, Number(settingsDraft.theme.terminalCursorWidth ?? 2))),
       },
+      behavior: {
+        ...settingsDraft.behavior,
+        singleInstance: settingsDraft.behavior.singleInstance ?? true,
+      },
     };
     const saved = await window.terminalApi.updateSettings(normalizedDraft);
     setSettings(saved);

@@ -80,6 +80,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const focusTerminalInput = useCallback((sessionId: number) => {
     const term = terminalMapRef.current.get(sessionId);
     if (!term) return;
+    void window.terminalApi.switchToEnglishInputMethod();
     requestAnimationFrame(() => term.focus());
     setTimeout(() => term.focus(), 30);
   }, []);
@@ -107,7 +108,12 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
       });
       fit = new FitAddon();
       term.loadAddon(fit);
-      term.loadAddon(new WebLinksAddon());
+      term.loadAddon(
+        new WebLinksAddon((event, uri) => {
+          event.preventDefault();
+          void window.terminalApi.openExternal(uri);
+        }),
+      );
       const runtimeTerm = term;
       term.onData(async (input) => {
         if (!runtimeTerm) return;

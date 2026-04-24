@@ -44,5 +44,6 @@ export const sharedState = {
   metricsCollecting: false,
   metricsSessionId: null as number | null,
   metricsInactiveSent: false,
+  singleInstanceLock: false,
   settingsCache: null as any
 };

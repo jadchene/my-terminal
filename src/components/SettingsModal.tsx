@@ -237,6 +237,19 @@ export function SettingsModal(props: SettingsModalProps) {
               <label className="check-line">
                 <input
                   type="checkbox"
+                  checked={draft.behavior.singleInstance ?? true}
+                  onChange={(e) =>
+                    onUpdateDraft({
+                      ...draft,
+                      behavior: { ...draft.behavior, singleInstance: e.target.checked },
+                    })
+                  }
+                />
+                单实例运行
+              </label>
+              <label className="check-line">
+                <input
+                  type="checkbox"
                   checked={draft.behavior.autoCopySelection}
                   onChange={(e) =>
                     onUpdateDraft({

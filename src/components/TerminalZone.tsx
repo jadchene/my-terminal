@@ -23,12 +23,18 @@ export function TerminalZone(props: TerminalZoneProps) {
     askConfirm,
   } = props;
 
+  const switchToEnglishInputMethod = () => {
+    void window.terminalApi.switchToEnglishInputMethod();
+  };
+
   return (
     <section className="terminal-zone">
       {activeSessionId && pausedOutput && <div className="pause-banner">已暂停输出，滚动到底部或按回车继续</div>}
       <div
         ref={terminalContainerRef}
         className="terminal-container"
+        onFocus={switchToEnglishInputMethod}
+        onMouseDown={switchToEnglishInputMethod}
         onWheel={() => {
           if (!activeSessionId) return;
           const term = terminalMapRef.current.get(activeSessionId);

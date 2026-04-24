@@ -10,11 +10,13 @@ import { AppSettings, Session } from './types';
 import { runtimeDir, userDataPath, dbPath } from './env';
 import { run, all, get } from './db';
 import { SETTINGS_KEY, readSettings, saveSettings } from './settings';
+import { applySingleInstancePreference } from './singleInstance';
 import { sshStateMap, sftpBatchControlMap, connectionSessionMap, lastKnownCwdMap, sharedState } from './state';
 import { runSftpUploadBatch, runSftpDownloadBatch, ensureUniqueLocalPath, getDefaultDownloadDir, resolveRemotePath, getOrCreateSftp } from './sftp';
 import { setSessionPasswordToKeytar, deleteSessionPasswordFromKeytar, toPublicSession, loadSession, getSessionForConnection, requireConnected, cleanupConnectionState } from './session';
 import { getShellPwd, processShellDataForPwdCapture, updateCwdFromPrompt } from './ssh';
 import { safeSend } from './window';
+import { switchToEnglishInputMethod } from './inputMethod';
 
 export function registerIpc() {
   ipcMain.handle('settings:get', async () => readSettings());
@@ -27,7 +29,13 @@ export function registerIpc() {
       behavior: { ...current.behavior, ...(partial.behavior || {}) },
       ui: { ...current.ui, ...(partial.ui || {}) },
     };
+    if ((merged.behavior.singleInstance ?? true) && !applySingleInstancePreference(true)) {
+      throw new Error('当前已有另一个实例占用单实例锁，无法启用单实例运行');
+    }
     await saveSettings(merged);
+    if (!(merged.behavior.singleInstance ?? true)) {
+      applySingleInstancePreference(false);
+    }
     safeSend('settings:changed', merged);
     return merged;
   });
@@ -435,4 +443,15 @@ export function registerIpc() {
     dbPath,
     os: os.platform(),
   }));
+  ipcMain.handle('app:open-external', async (_, url: string) => {
+    try {
+      const parsed = new URL(String(url || ''));
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+      await shell.openExternal(parsed.toString());
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  ipcMain.handle('app:switch-to-english-input-method', async () => switchToEnglishInputMethod());
 }

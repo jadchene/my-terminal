@@ -24,6 +24,7 @@ export type AppSettings = {
     rightClickPaste: boolean;
     multilineWarning: boolean;
     defaultDownloadDir: string;
+    singleInstance: boolean;
   };
   ui: {
     sidebarVisible: boolean;

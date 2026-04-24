@@ -90,6 +90,17 @@ export function createWindow() {
   } else {
     sharedState.mainWindow.loadFile(path.join(appRoot, 'dist', 'index.html'));
   }
+  sharedState.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        void shell.openExternal(parsed.toString());
+      }
+    } catch {
+      // Ignore invalid renderer window-open requests.
+    }
+    return { action: 'deny' };
+  });
   sharedState.mainWindow.webContents.on('did-fail-load', (_, code, desc, url) => {
     console.error('Renderer load failed:', { code, desc, url });
   });

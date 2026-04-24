@@ -87,4 +87,6 @@ contextBridge.exposeInMainWorld('terminalApi', {
   },
   pickDirectory: (defaultPath) => ipcRenderer.invoke('dialog:pick-directory', defaultPath),
   getRuntimePaths: () => ipcRenderer.invoke('app:runtime-paths'),
+  openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
+  switchToEnglishInputMethod: () => ipcRenderer.invoke('app:switch-to-english-input-method'),
 });

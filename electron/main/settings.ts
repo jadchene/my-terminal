@@ -27,6 +27,7 @@ export const defaultSettings: AppSettings = {
     rightClickPaste: true,
     multilineWarning: true,
     defaultDownloadDir: '',
+    singleInstance: true,
   },
   ui: {
     sidebarVisible: true,

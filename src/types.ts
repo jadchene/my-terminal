@@ -15,6 +15,7 @@ export type Settings = {
     rightClickPaste: boolean;
     multilineWarning: boolean;
     defaultDownloadDir: string;
+    singleInstance: boolean;
   };
   ui: {
     sidebarVisible: boolean;
@@ -184,6 +185,8 @@ declare global {
       getPathForDroppedFile: (file: File) => string;
       pickDirectory: (defaultPath?: string) => Promise<string | null>;
       getRuntimePaths: () => Promise<{ runtimeDir: string; userDataPath: string; settingsStorage: string; dbPath: string; os: string }>;
+      openExternal: (url: string) => Promise<boolean>;
+      switchToEnglishInputMethod: () => Promise<boolean>;
     };
   }
 }

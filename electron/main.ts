@@ -13,6 +13,8 @@ import { subscribeMetrics } from './main/metrics';
 import { clearPendingPwdCapture, clearPendingCwdProbe } from './main/ssh';
 import { createWindow } from './main/window';
 import { registerIpc } from './main/ipc';
+import { readSettings } from './main/settings';
+import { applySingleInstancePreference } from './main/singleInstance';
 
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
@@ -20,8 +22,14 @@ if (!fs.existsSync(userDataPath)) {
 
 app.setPath('userData', userDataPath);
 
-app.whenReady().then(async () => {
+async function startApp() {
   await initStorage();
+  if (!applySingleInstancePreference(readSettings().behavior.singleInstance ?? true)) {
+    app.quit();
+    return;
+  }
+
+  await app.whenReady();
   registerIpc();
   createWindow();
   subscribeMetrics();
@@ -29,6 +37,11 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}
+
+void startApp().catch((error) => {
+  console.error('Failed to start application:', error);
+  app.quit();
 });
 
 app.on('window-all-closed', () => {
