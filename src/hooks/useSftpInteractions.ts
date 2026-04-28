@@ -22,7 +22,7 @@ type UseSftpInteractionsParams = {
   getLocalPathsFromDrop: (event: React.DragEvent) => string[];
   getSftpPathsFromDrag: (event: React.DragEvent) => string[];
   submitSftpPath: () => Promise<void>;
-  setSftpSelection: (fullPath: string, checked: boolean) => void;
+  setSftpSelection: (fullPath: string, checked: boolean, range?: boolean) => void;
   showAlert: (message: string, title?: string) => Promise<void>;
   askPrompt: (message: string, initialValue?: string, title?: string) => Promise<string | null>;
   askConfirm: (message: string, title?: string) => Promise<boolean>;
@@ -109,7 +109,10 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
     setSettings(saved);
   };
 
-  const onRefresh = async () => refreshSftp();
+  const onRefresh = async () => {
+    clearSftpSelectionNow();
+    await refreshSftp();
+  };
   const onGoParent = async () => navigateSftp(getParentSftpPath(sftpPath));
 
   const onFollowCwd = async () => {

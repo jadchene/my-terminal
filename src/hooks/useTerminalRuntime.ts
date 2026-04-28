@@ -4,6 +4,7 @@ import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import type { MutableRefObject } from 'react';
 import type { Settings } from '../types';
+import { normalizeTerminalDataInput } from '../utils/terminalInput';
 
 type UseTerminalRuntimeParams = {
   activeSessionIdRef: MutableRefObject<number | null>;
@@ -77,10 +78,12 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     setTimeout(() => fitTerminal(sessionId), 220);
   }, [fitTerminal]);
 
-  const focusTerminalInput = useCallback((sessionId: number) => {
+  const focusTerminalInput = useCallback((sessionId: number, autoSwitchEnglishInputMethod = false) => {
     const term = terminalMapRef.current.get(sessionId);
     if (!term) return;
-    void window.terminalApi.switchToEnglishInputMethod();
+    if (autoSwitchEnglishInputMethod) {
+      void window.terminalApi.switchToEnglishInputMethod();
+    }
     requestAnimationFrame(() => term.focus());
     setTimeout(() => term.focus(), 30);
   }, []);
@@ -133,7 +136,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
           return;
         }
         if (paused) return;
-        await sendInput({ sessionId, input });
+        await sendInput({ sessionId, input: normalizeTerminalDataInput(input) });
       });
       term.onResize(({ cols, rows }) => {
         resizePty({ sessionId, cols, rows }).catch(() => null);
@@ -168,7 +171,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     terminalContainerRef.current.innerHTML = '';
     term.open(terminalContainerRef.current);
     fitTerminalStabilized(sessionId);
-    focusTerminalInput(sessionId);
+    focusTerminalInput(sessionId, !!localSettings.behavior.autoSwitchEnglishInputMethod);
     const paused = !isAtBottom(term);
     setPausedByScroll(sessionId, paused, term);
   }, [

@@ -48,7 +48,7 @@ type SidebarShellProps = {
     onStartItemDrag: (e: DragEvent<HTMLDivElement>, fullPath: string) => void;
     onEndItemDrag: () => void;
     onOpenItemMenu: (e: MouseEvent, payload: { path: string; name: string; isDir: boolean }) => void;
-    onToggleItemSelect: (fullPath: string, checked: boolean) => void;
+    onToggleItemSelect: (fullPath: string, checked: boolean, range?: boolean) => void;
     onOpenDir: (nextPath: string) => Promise<void>;
   };
   onCancelTransfer: (row: TransferRow) => void;

@@ -25,6 +25,7 @@ export type AppSettings = {
     multilineWarning: boolean;
     defaultDownloadDir: string;
     singleInstance: boolean;
+    autoSwitchEnglishInputMethod: boolean;
   };
   ui: {
     sidebarVisible: boolean;

@@ -1,6 +1,7 @@
 import type { MutableRefObject } from 'react';
 import type { Terminal } from 'xterm';
 import type { Settings } from '../types';
+import { hasMultilineInput, normalizeTerminalPaste } from '../utils/terminalInput';
 
 type TerminalZoneProps = {
   activeSessionId: number | null;
@@ -24,7 +25,16 @@ export function TerminalZone(props: TerminalZoneProps) {
   } = props;
 
   const switchToEnglishInputMethod = () => {
+    if (!settings.behavior.autoSwitchEnglishInputMethod) return;
     void window.terminalApi.switchToEnglishInputMethod();
+  };
+
+  const pasteClipboardText = async (text: string) => {
+    if (!activeSessionId || !text) return;
+    if (settings.behavior.multilineWarning && hasMultilineInput(text)) {
+      if (!(await askConfirm('检测到多行内容，确认粘贴到终端吗？'))) return;
+    }
+    await window.terminalApi.sshSend({ sessionId: activeSessionId, input: normalizeTerminalPaste(text) });
   };
 
   return (
@@ -35,6 +45,12 @@ export function TerminalZone(props: TerminalZoneProps) {
         className="terminal-container"
         onFocus={switchToEnglishInputMethod}
         onMouseDown={switchToEnglishInputMethod}
+        onPasteCapture={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const text = event.clipboardData.getData('text');
+          void pasteClipboardText(text);
+        }}
         onWheel={() => {
           if (!activeSessionId) return;
           const term = terminalMapRef.current.get(activeSessionId);
@@ -55,11 +71,7 @@ export function TerminalZone(props: TerminalZoneProps) {
           event.preventDefault();
           if (!activeSessionId || !settings.behavior.rightClickPaste) return;
           const text = await navigator.clipboard.readText();
-          if (!text) return;
-          if (settings.behavior.multilineWarning && text.includes('\n')) {
-            if (!(await askConfirm('检测到多行内容，确认粘贴到终端吗？'))) return;
-          }
-          await window.terminalApi.sshSend({ sessionId: activeSessionId, input: text });
+          await pasteClipboardText(text);
         }}
       />
     </section>

@@ -286,6 +286,19 @@ export function SettingsModal(props: SettingsModalProps) {
                 />
                 多行预警
               </label>
+              <label className="check-line">
+                <input
+                  type="checkbox"
+                  checked={draft.behavior.autoSwitchEnglishInputMethod ?? false}
+                  onChange={(e) =>
+                    onUpdateDraft({
+                      ...draft,
+                      behavior: { ...draft.behavior, autoSwitchEnglishInputMethod: e.target.checked },
+                    })
+                  }
+                />
+                聚焦会话区域时切换英文输入模式
+              </label>
               <label>
                 默认下载目录
                 <div className="path-picker">

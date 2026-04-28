@@ -20,6 +20,7 @@ export function useSftpPanel(params: UseSftpPanelParams) {
   const showHiddenFilesRef = useRef(showHiddenFiles);
   const sftpPathRef = useRef(sftpPath);
   const sftpPathInputRef = useRef(sftpPathInput);
+  const sftpSelectionAnchorRef = useRef<string | null>(null);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -50,12 +51,34 @@ export function useSftpPanel(params: UseSftpPanelParams) {
     setSelectedSftpPaths((prev) => prev.filter((it) => list.some((item) => `${target.replace(/\/$/, '')}/${item.name}` === it)));
   }, []);
 
-  const setSftpSelection = useCallback((fullPath: string, checked: boolean) => {
+  const getVisibleSftpPaths = useCallback(() => {
+    const basePath = sftpPathRef.current.replace(/\/$/, '');
+    return sftpItems.map((item) => `${basePath}/${item.name}`);
+  }, [sftpItems]);
+
+  const setSftpSelection = useCallback((fullPath: string, checked: boolean, range = false) => {
+    const anchorPath = sftpSelectionAnchorRef.current;
+    const visiblePaths = getVisibleSftpPaths();
+    if (range && anchorPath) {
+      const anchorIndex = visiblePaths.indexOf(anchorPath);
+      const targetIndex = visiblePaths.indexOf(fullPath);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const start = Math.min(anchorIndex, targetIndex);
+        const end = Math.max(anchorIndex, targetIndex);
+        const rangePaths = visiblePaths.slice(start, end + 1);
+        setSelectedSftpPaths((prev) => {
+          if (checked) return Array.from(new Set([...prev, ...rangePaths]));
+          return prev.filter((it) => !rangePaths.includes(it));
+        });
+        return;
+      }
+    }
+    sftpSelectionAnchorRef.current = fullPath;
     setSelectedSftpPaths((prev) => {
       if (checked) return prev.includes(fullPath) ? prev : [...prev, fullPath];
       return prev.filter((it) => it !== fullPath);
     });
-  }, []);
+  }, [getVisibleSftpPaths]);
 
   const navigateSftp = useCallback(async (nextPath: string) => {
     sftpPathRef.current = nextPath;
@@ -66,11 +89,13 @@ export function useSftpPanel(params: UseSftpPanelParams) {
   const clearSftpSelectionNow = useCallback(() => {
     flushSync(() => {
       setSelectedSftpPaths([]);
+      sftpSelectionAnchorRef.current = null;
     });
   }, []);
 
   const clearSftpSelection = useCallback(() => {
     setSelectedSftpPaths([]);
+    sftpSelectionAnchorRef.current = null;
   }, []);
 
   const clearSftpItems = useCallback(() => {

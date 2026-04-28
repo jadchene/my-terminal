@@ -28,6 +28,7 @@ export const defaultSettings: AppSettings = {
     multilineWarning: true,
     defaultDownloadDir: '',
     singleInstance: true,
+    autoSwitchEnglishInputMethod: false,
   },
   ui: {
     sidebarVisible: true,

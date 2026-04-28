@@ -44,7 +44,7 @@ type SftpPanelProps = {
   onStartItemDrag: (e: React.DragEvent<HTMLDivElement>, fullPath: string) => void;
   onEndItemDrag: () => void;
   onOpenItemMenu: (e: React.MouseEvent, payload: { path: string; name: string; isDir: boolean }) => void;
-  onToggleItemSelect: (fullPath: string, checked: boolean) => void;
+  onToggleItemSelect: (fullPath: string, checked: boolean, range?: boolean) => void;
   onOpenDir: (nextPath: string) => Promise<void>;
   onCancelTransfer: (row: TransferRow) => void;
 };
@@ -155,7 +155,7 @@ export function SftpPanel(props: SftpPanelProps) {
                     type="checkbox"
                     className="sftp-select"
                     checked={selectedSftpPaths.includes(fullPath)}
-                    onChange={(e) => onToggleItemSelect(fullPath, e.target.checked)}
+                    onChange={(e) => onToggleItemSelect(fullPath, e.target.checked, (e.nativeEvent as MouseEvent).shiftKey)}
                     onClick={(e) => e.stopPropagation()}
                   />
                   <button

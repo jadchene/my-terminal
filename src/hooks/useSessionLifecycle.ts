@@ -10,7 +10,7 @@ type UseSessionLifecycleParams = {
   terminalContainerRef: MutableRefObject<HTMLDivElement | null>;
   connectSession: (session: Session, forceNew?: boolean) => Promise<void>;
   attachTerminal: (sessionId: number, settings: Settings) => void;
-  focusTerminalInput: (sessionId: number) => void;
+  focusTerminalInput: (sessionId: number, autoSwitchEnglishInputMethod?: boolean) => void;
   getPausedByScroll: (sessionId: number) => boolean;
   setPausedOutput: Dispatch<SetStateAction<boolean>>;
   flushPendingOutput: (sessionId: number) => void;
@@ -57,7 +57,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
   useEffect(() => {
     if (!settings || !activeSessionId) return;
     attachTerminal(activeSessionId, settings);
-    focusTerminalInput(activeSessionId);
+    focusTerminalInput(activeSessionId, !!settings.behavior.autoSwitchEnglishInputMethod);
     const paused = getPausedByScroll(activeSessionId);
     setPausedOutput(paused);
     if (!paused) {
@@ -73,6 +73,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
     settings?.theme.terminalCursorBlink,
     settings?.theme.terminalCursorWidth,
     settings?.behavior.autoCopySelection,
+    settings?.behavior.autoSwitchEnglishInputMethod,
     attachTerminal,
     focusTerminalInput,
     getPausedByScroll,
