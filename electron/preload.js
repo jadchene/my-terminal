@@ -31,7 +31,10 @@ contextBridge.exposeInMainWorld('terminalApi', {
   deleteSession: (sessionId) => ipcRenderer.invoke('session:delete', sessionId),
 
   sshConnect: (payload) => ipcRenderer.invoke('ssh:connect', payload),
-  sshSend: (payload) => ipcRenderer.invoke('ssh:send', payload),
+  sshSend: (payload) => {
+    ipcRenderer.send('ssh:send', payload);
+    return Promise.resolve(true);
+  },
   sshResize: (payload) => ipcRenderer.invoke('ssh:resize', payload),
   sshDisconnect: (sessionId) => ipcRenderer.invoke('ssh:disconnect', sessionId),
   sshGetCwd: (sessionId) => ipcRenderer.invoke('ssh:get-cwd', sessionId),

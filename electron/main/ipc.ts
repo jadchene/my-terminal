@@ -259,11 +259,21 @@ export function registerIpc() {
     },
   );
 
-  ipcMain.handle('ssh:send', async (_, payload: { sessionId: number; input: string }) => {
+  const writeSshInput = (payload: { sessionId: number; input: string }) => {
     const state = sshStateMap.get(payload.sessionId);
     if (!state?.shell) throw new Error('SSH 未连接');
     state.shell.write(payload.input);
     return true;
+  };
+  ipcMain.handle('ssh:send', async (_, payload: { sessionId: number; input: string }) => {
+    return writeSshInput(payload);
+  });
+  ipcMain.on('ssh:send', (_, payload: { sessionId: number; input: string }) => {
+    try {
+      writeSshInput(payload);
+    } catch (error) {
+      console.warn('[SSH] Failed to send input:', error);
+    }
   });
   ipcMain.handle('ssh:resize', async (_, payload: { sessionId: number; cols: number; rows: number }) => {
     const state = sshStateMap.get(payload.sessionId);

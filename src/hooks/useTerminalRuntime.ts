@@ -20,6 +20,8 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const fitMapRef = useRef<Map<number, FitAddon>>(new Map());
   const pausedByScrollRef = useRef<Map<number, boolean>>(new Map());
   const pendingOutputRef = useRef<Map<number, string>>(new Map());
+  const pendingInputRef = useRef<Map<number, string>>(new Map());
+  const pendingInputTimerRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const reconnectHandlerRef = useRef<((tabId: number) => void) | null>(null);
   const autoCopySelectionRef = useRef<Map<number, boolean>>(new Map());
   const [pausedOutput, setPausedOutput] = useState(false);
@@ -27,6 +29,32 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const setReconnectHandler = useCallback((handler: (tabId: number) => void) => {
     reconnectHandlerRef.current = handler;
   }, []);
+
+  const flushPendingInput = useCallback((sessionId: number) => {
+    const timer = pendingInputTimerRef.current.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      pendingInputTimerRef.current.delete(sessionId);
+    }
+    const input = pendingInputRef.current.get(sessionId);
+    if (!input) return;
+    pendingInputRef.current.delete(sessionId);
+    void Promise.resolve(sendInput({ sessionId, input })).catch((error) => {
+      console.warn('[Terminal] Failed to send input:', error);
+    });
+  }, [sendInput]);
+
+  const queueInput = useCallback((sessionId: number, input: string, flushNow = false) => {
+    const current = pendingInputRef.current.get(sessionId) || '';
+    pendingInputRef.current.set(sessionId, current + input);
+    if (flushNow) {
+      flushPendingInput(sessionId);
+      return;
+    }
+    if (pendingInputTimerRef.current.has(sessionId)) return;
+    const timer = setTimeout(() => flushPendingInput(sessionId), 4);
+    pendingInputTimerRef.current.set(sessionId, timer);
+  }, [flushPendingInput]);
 
   const isAtBottom = useCallback((term: Terminal): boolean => term.buffer.active.viewportY >= term.buffer.active.baseY, []);
 
@@ -118,7 +146,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
         }),
       );
       const runtimeTerm = term;
-      term.onData(async (input) => {
+      term.onData((input) => {
         if (!runtimeTerm) return;
         if (disconnectedByTabRef.current.get(sessionId)) {
           if (input.toLowerCase() === 'r') {
@@ -136,7 +164,8 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
           return;
         }
         if (paused) return;
-        await sendInput({ sessionId, input: normalizeTerminalDataInput(input) });
+        const normalizedInput = normalizeTerminalDataInput(input);
+        queueInput(sessionId, normalizedInput, normalizedInput.includes('\r') || normalizedInput.includes('\n'));
       });
       term.onResize(({ cols, rows }) => {
         resizePty({ sessionId, cols, rows }).catch(() => null);
@@ -180,9 +209,9 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     fitTerminalStabilized,
     isAtBottom,
     resizePty,
-    sendInput,
     setPausedByScroll,
     syncPauseStateWithViewport,
+    queueInput,
   ]);
 
   return {
