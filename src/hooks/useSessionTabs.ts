@@ -20,6 +20,7 @@ type UseSessionTabsParams = {
   reconnectingTabRef: MutableRefObject<Set<number>>;
   attachTerminal: (sessionId: number, settings: Settings) => void;
   setPausedOutput: Dispatch<SetStateAction<boolean>>;
+  onReconnectActiveSession?: (tabId: number) => Promise<void> | void;
   askPassword: (message: string, title?: string) => Promise<string | null>;
   showAlert: (message: string, title?: string) => Promise<void>;
   isAuthError: (message: string) => boolean;
@@ -43,6 +44,7 @@ export function useSessionTabs(params: UseSessionTabsParams) {
     reconnectingTabRef,
     attachTerminal,
     setPausedOutput,
+    onReconnectActiveSession,
     askPassword,
     showAlert,
     isAuthError,
@@ -55,11 +57,18 @@ export function useSessionTabs(params: UseSessionTabsParams) {
     const session = sessionsRef.current.find((it) => it.id === tab.sessionId);
     if (!session) return;
     reconnectingTabRef.current.add(tabId);
-    try {
-      await window.terminalApi.sshConnect({ sessionId: session.id, connectionId: tabId });
+    const markReconnected = async () => {
       disconnectedByTabRef.current.set(tabId, false);
       if (settingsRef.current) attachTerminal(tabId, settingsRef.current);
-      if (activeSessionIdRef.current === tabId) setPausedOutput(false);
+      if (activeSessionIdRef.current === tabId) {
+        await window.terminalApi.setMetricsSession(tabId).catch(() => false);
+        await Promise.resolve(onReconnectActiveSession?.(tabId)).catch(() => undefined);
+        setPausedOutput(false);
+      }
+    };
+    try {
+      await window.terminalApi.sshConnect({ sessionId: session.id, connectionId: tabId });
+      await markReconnected();
       return;
     } catch (error) {
       const message = String(error);
@@ -93,9 +102,7 @@ export function useSessionTabs(params: UseSessionTabsParams) {
           setSessions((prev) =>
             prev.map((it) => (it.id === session.id ? { ...it, password: retryPassword, remember_password: 1 } : it)),
           );
-          disconnectedByTabRef.current.set(tabId, false);
-          if (settingsRef.current) attachTerminal(tabId, settingsRef.current);
-          if (activeSessionIdRef.current === tabId) setPausedOutput(false);
+          await markReconnected();
           return;
         } catch (retryError) {
           const retryMessage = String(retryError);

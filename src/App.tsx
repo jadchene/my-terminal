@@ -257,6 +257,13 @@ export default function App() {
     reconnectingTabRef,
     attachTerminal,
     setPausedOutput,
+    onReconnectActiveSession: async (tabId) => {
+      const home = await window.terminalApi.sftpGetHome(tabId).catch(() => '~');
+      const target = home?.trim() || '~';
+      setSftpPath(target);
+      clearSftpSelection();
+      await refreshSftp(target).catch(() => undefined);
+    },
     askPassword,
     showAlert,
     isAuthError,
