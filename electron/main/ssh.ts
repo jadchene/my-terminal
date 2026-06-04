@@ -43,7 +43,9 @@ export function resolveHomeToken(connectionId: number, tokenPath: string): strin
 }
 
 export function updateCwdFromPrompt(connectionId: number, shellChunk: string) {
-  const clean = stripAnsi(shellChunk);
+  const tail = shellChunk.length > 4096 ? shellChunk.slice(-4096) : shellChunk;
+  if (!tail.includes(']')) return;
+  const clean = stripAnsi(tail);
   const lines = clean.split(/\r?\n/);
   for (const rawLine of lines) {
     const line = rawLine.trim();

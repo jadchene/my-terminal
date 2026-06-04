@@ -1,4 +1,4 @@
-import type { MutableRefObject } from 'react';
+import { memo, useRef, type MutableRefObject } from 'react';
 import type { Terminal } from 'xterm';
 import type { Settings } from '../types';
 import { hasMultilineInput, normalizeTerminalPaste } from '../utils/terminalInput';
@@ -13,7 +13,7 @@ type TerminalZoneProps = {
   askConfirm: (message: string, title?: string) => Promise<boolean>;
 };
 
-export function TerminalZone(props: TerminalZoneProps) {
+function TerminalZoneInner(props: TerminalZoneProps) {
   const {
     activeSessionId,
     pausedOutput,
@@ -23,10 +23,21 @@ export function TerminalZone(props: TerminalZoneProps) {
     syncPauseStateWithViewport,
     askConfirm,
   } = props;
+  const pauseSyncFrameRef = useRef<number | null>(null);
 
   const switchToEnglishInputMethod = () => {
     if (!settings.behavior.autoSwitchEnglishInputMethod) return;
     void window.terminalApi.switchToEnglishInputMethod();
+  };
+
+  const scheduleViewportPauseSync = () => {
+    if (!activeSessionId || pauseSyncFrameRef.current != null) return;
+    const term = terminalMapRef.current.get(activeSessionId);
+    if (!term) return;
+    pauseSyncFrameRef.current = requestAnimationFrame(() => {
+      pauseSyncFrameRef.current = null;
+      syncPauseStateWithViewport(activeSessionId, term);
+    });
   };
 
   const pasteClipboardText = async (text: string) => {
@@ -51,22 +62,8 @@ export function TerminalZone(props: TerminalZoneProps) {
           const text = event.clipboardData.getData('text');
           void pasteClipboardText(text);
         }}
-        onWheel={() => {
-          if (!activeSessionId) return;
-          const term = terminalMapRef.current.get(activeSessionId);
-          if (!term) return;
-          requestAnimationFrame(() => {
-            syncPauseStateWithViewport(activeSessionId, term);
-          });
-        }}
-        onMouseUp={() => {
-          if (!activeSessionId) return;
-          const term = terminalMapRef.current.get(activeSessionId);
-          if (!term) return;
-          requestAnimationFrame(() => {
-            syncPauseStateWithViewport(activeSessionId, term);
-          });
-        }}
+        onWheel={scheduleViewportPauseSync}
+        onMouseUp={scheduleViewportPauseSync}
         onContextMenu={async (event) => {
           event.preventDefault();
           if (!activeSessionId || !settings.behavior.rightClickPaste) return;
@@ -77,3 +74,5 @@ export function TerminalZone(props: TerminalZoneProps) {
     </section>
   );
 }
+
+export const TerminalZone = memo(TerminalZoneInner);

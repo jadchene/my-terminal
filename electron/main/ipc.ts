@@ -18,7 +18,55 @@ import { getShellPwd, processShellDataForPwdCapture, updateCwdFromPrompt } from 
 import { safeSend } from './window';
 import { switchToEnglishInputMethod } from './inputMethod';
 
+const SSH_DATA_FLUSH_DELAY_MS = 4;
+const MAX_SSH_DATA_IPC_CHUNK = 64 * 1024;
+
 export function registerIpc() {
+  const sshDataBufferMap = new Map<number, string>();
+  const sshDataTimerMap = new Map<number, ReturnType<typeof setTimeout>>();
+  const flushSshData = (connectionId: number, flushAll = false) => {
+    const timer = sshDataTimerMap.get(connectionId);
+    if (timer) {
+      clearTimeout(timer);
+      sshDataTimerMap.delete(connectionId);
+    }
+    const data = sshDataBufferMap.get(connectionId);
+    if (!data) return;
+    if (data.length <= MAX_SSH_DATA_IPC_CHUNK) {
+      sshDataBufferMap.delete(connectionId);
+      safeSend('ssh:data', { sessionId: connectionId, data });
+      return;
+    }
+    if (flushAll) {
+      sshDataBufferMap.delete(connectionId);
+      for (let start = 0; start < data.length; start += MAX_SSH_DATA_IPC_CHUNK) {
+        safeSend('ssh:data', {
+          sessionId: connectionId,
+          data: data.slice(start, start + MAX_SSH_DATA_IPC_CHUNK),
+        });
+      }
+      return;
+    }
+    const chunk = data.slice(0, MAX_SSH_DATA_IPC_CHUNK);
+    const rest = data.slice(MAX_SSH_DATA_IPC_CHUNK);
+    sshDataBufferMap.set(connectionId, rest);
+    safeSend('ssh:data', { sessionId: connectionId, data: chunk });
+    const nextTimer = setTimeout(() => flushSshData(connectionId), 0);
+    sshDataTimerMap.set(connectionId, nextTimer);
+  };
+  const enqueueSshData = (connectionId: number, data: string) => {
+    const current = sshDataBufferMap.get(connectionId) || '';
+    const next = current + data;
+    sshDataBufferMap.set(connectionId, next);
+    if (next.length >= MAX_SSH_DATA_IPC_CHUNK) {
+      flushSshData(connectionId);
+      return;
+    }
+    if (sshDataTimerMap.has(connectionId)) return;
+    const timer = setTimeout(() => flushSshData(connectionId), SSH_DATA_FLUSH_DELAY_MS);
+    sshDataTimerMap.set(connectionId, timer);
+  };
+
   ipcMain.handle('settings:get', async () => readSettings());
   ipcMain.handle('settings:update', async (_, partial: Partial<AppSettings>) => {
     const current = readSettings();
@@ -172,6 +220,7 @@ export function registerIpc() {
       const session = await loadSession(profileSessionId);
       const password = connectPayload.password ?? session.password;
       const savePassword = !!connectPayload.savePassword && !!connectPayload.password;
+      flushSshData(connectionId);
       await cleanupConnectionState(connectionId);
     return new Promise<boolean>((resolve, reject) => {
       const client = new Client();
@@ -225,9 +274,10 @@ export function registerIpc() {
               const text = data.toString('utf8');
               processShellDataForPwdCapture(connectionId, text);
               updateCwdFromPrompt(connectionId, text);
-              safeSend('ssh:data', { sessionId: connectionId, data: text });
+              enqueueSshData(connectionId, text);
             });
             stream.on('close', () => {
+              flushSshData(connectionId, true);
               void cleanupConnectionState(connectionId).finally(() => {
                 safeSend('ssh:closed', { sessionId: connectionId });
               });
@@ -288,6 +338,7 @@ export function registerIpc() {
     }
   });
   ipcMain.handle('ssh:disconnect', async (_, sessionId: number) => {
+    flushSshData(sessionId, true);
     await cleanupConnectionState(sessionId);
     return true;
   });

@@ -6,6 +6,13 @@ import type { MutableRefObject } from 'react';
 import type { Settings } from '../types';
 import { normalizeTerminalDataInput } from '../utils/terminalInput';
 
+const MAX_TERMINAL_WRITE_CHUNK = 64 * 1024;
+const IMMEDIATE_TERMINAL_WRITE_CHUNK = 2 * 1024;
+
+function canWriteImmediately(data: string): boolean {
+  return data.length <= IMMEDIATE_TERMINAL_WRITE_CHUNK && !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(data);
+}
+
 type UseTerminalRuntimeParams = {
   activeSessionIdRef: MutableRefObject<number | null>;
   disconnectedByTabRef: MutableRefObject<Map<number, boolean>>;
@@ -18,8 +25,13 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const terminalContainerRef = useRef<HTMLDivElement>(null);
   const terminalMapRef = useRef<Map<number, Terminal>>(new Map());
   const fitMapRef = useRef<Map<number, FitAddon>>(new Map());
+  const fitFrameRef = useRef<Map<number, number>>(new Map());
+  const stabilizedFitTimerRef = useRef<Map<number, ReturnType<typeof setTimeout>[]>>(new Map());
   const pausedByScrollRef = useRef<Map<number, boolean>>(new Map());
   const pendingOutputRef = useRef<Map<number, string>>(new Map());
+  const pendingWriteRef = useRef<Map<number, string>>(new Map());
+  const pendingWriteFrameRef = useRef<Map<number, number>>(new Map());
+  const pauseSyncFrameRef = useRef<Map<number, number>>(new Map());
   const pendingInputRef = useRef<Map<number, string>>(new Map());
   const pendingInputTimerRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const reconnectHandlerRef = useRef<((tabId: number) => void) | null>(null);
@@ -63,14 +75,47 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     pendingOutputRef.current.set(sessionId, old + data);
   }, []);
 
+  const writeTerminalOutput = useCallback((sessionId: number, data: string, term?: Terminal) => {
+    const target = term ?? terminalMapRef.current.get(sessionId);
+    if (!target || !data) return;
+    if (
+      canWriteImmediately(data) &&
+      !pendingWriteRef.current.has(sessionId) &&
+      !pendingWriteFrameRef.current.has(sessionId)
+    ) {
+      target.write(data);
+      return;
+    }
+    const old = pendingWriteRef.current.get(sessionId) || '';
+    pendingWriteRef.current.set(sessionId, old + data);
+    if (pendingWriteFrameRef.current.has(sessionId)) return;
+    const frame = requestAnimationFrame(function flushFrame() {
+      pendingWriteFrameRef.current.delete(sessionId);
+      const pending = pendingWriteRef.current.get(sessionId);
+      if (!pending) return;
+      const chunk = pending.slice(0, MAX_TERMINAL_WRITE_CHUNK);
+      const rest = pending.slice(MAX_TERMINAL_WRITE_CHUNK);
+      if (rest) {
+        pendingWriteRef.current.set(sessionId, rest);
+        const nextFrame = requestAnimationFrame(flushFrame);
+        pendingWriteFrameRef.current.set(sessionId, nextFrame);
+      } else {
+        pendingWriteRef.current.delete(sessionId);
+      }
+      const current = terminalMapRef.current.get(sessionId);
+      if (current) current.write(chunk);
+    });
+    pendingWriteFrameRef.current.set(sessionId, frame);
+  }, []);
+
   const flushPendingOutput = useCallback((sessionId: number, term?: Terminal) => {
     const target = term ?? terminalMapRef.current.get(sessionId);
     if (!target) return;
     const pending = pendingOutputRef.current.get(sessionId);
     if (!pending) return;
     pendingOutputRef.current.delete(sessionId);
-    target.write(pending);
-  }, []);
+    writeTerminalOutput(sessionId, pending, target);
+  }, [writeTerminalOutput]);
 
   const setPausedByScroll = useCallback((sessionId: number, paused: boolean, term?: Terminal) => {
       pausedByScrollRef.current.set(sessionId, paused);
@@ -87,6 +132,11 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const syncPauseStateWithViewport = useCallback((sessionId: number, term?: Terminal) => {
     const target = term ?? terminalMapRef.current.get(sessionId);
     if (!target) return;
+    if (target.buffer.active.type === 'alternate') {
+      const current = pausedByScrollRef.current.get(sessionId) || false;
+      if (current) setPausedByScroll(sessionId, false, target);
+      return;
+    }
     const paused = !isAtBottom(target);
     const current = pausedByScrollRef.current.get(sessionId) || false;
     if (paused !== current) {
@@ -94,16 +144,43 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     }
   }, [isAtBottom, setPausedByScroll]);
 
-  const fitTerminal = useCallback((sessionId: number) => {
+  const schedulePauseStateSync = useCallback((sessionId: number, term?: Terminal) => {
+    if (pauseSyncFrameRef.current.has(sessionId)) return;
+    const frame = requestAnimationFrame(() => {
+      pauseSyncFrameRef.current.delete(sessionId);
+      syncPauseStateWithViewport(sessionId, term);
+    });
+    pauseSyncFrameRef.current.set(sessionId, frame);
+  }, [syncPauseStateWithViewport]);
+
+  const runFitTerminal = useCallback((sessionId: number) => {
     const fit = fitMapRef.current.get(sessionId);
     if (fit) fit.fit();
   }, []);
 
+  const fitTerminal = useCallback((sessionId: number) => {
+    if (fitFrameRef.current.has(sessionId)) return;
+    const frame = requestAnimationFrame(() => {
+      fitFrameRef.current.delete(sessionId);
+      runFitTerminal(sessionId);
+    });
+    fitFrameRef.current.set(sessionId, frame);
+  }, [runFitTerminal]);
+
   const fitTerminalStabilized = useCallback((sessionId: number) => {
+    const oldTimers = stabilizedFitTimerRef.current.get(sessionId) || [];
+    oldTimers.forEach((timer) => clearTimeout(timer));
+    stabilizedFitTimerRef.current.delete(sessionId);
     fitTerminal(sessionId);
     requestAnimationFrame(() => fitTerminal(sessionId));
-    setTimeout(() => fitTerminal(sessionId), 80);
-    setTimeout(() => fitTerminal(sessionId), 220);
+    const timers = [
+      setTimeout(() => fitTerminal(sessionId), 80),
+      setTimeout(() => {
+        fitTerminal(sessionId);
+        stabilizedFitTimerRef.current.delete(sessionId);
+      }, 220),
+    ];
+    stabilizedFitTimerRef.current.set(sessionId, timers);
   }, [fitTerminal]);
 
   const focusTerminalInput = useCallback((sessionId: number, autoSwitchEnglishInputMethod = false) => {
@@ -154,18 +231,20 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
           }
           return;
         }
-        syncPauseStateWithViewport(sessionId, runtimeTerm);
-        const pausedByViewport = !isAtBottom(runtimeTerm);
-        const paused = (pausedByScrollRef.current.get(sessionId) || false) || pausedByViewport;
+        const paused = pausedByScrollRef.current.get(sessionId) || false;
         if (paused && (input === '\r' || input === '\n')) {
           runtimeTerm.scrollToBottom();
           setPausedByScroll(sessionId, false, runtimeTerm);
-          requestAnimationFrame(() => syncPauseStateWithViewport(sessionId, runtimeTerm));
+          schedulePauseStateSync(sessionId, runtimeTerm);
           return;
         }
         if (paused) return;
         const normalizedInput = normalizeTerminalDataInput(input);
-        queueInput(sessionId, normalizedInput, normalizedInput.includes('\r') || normalizedInput.includes('\n'));
+        queueInput(
+          sessionId,
+          normalizedInput,
+          normalizedInput.length <= 1 || normalizedInput.includes('\r') || normalizedInput.includes('\n'),
+        );
       });
       term.onResize(({ cols, rows }) => {
         resizePty({ sessionId, cols, rows }).catch(() => null);
@@ -178,7 +257,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
         await navigator.clipboard.writeText(selected);
       });
       term.onScroll(() => {
-        syncPauseStateWithViewport(sessionId, runtimeTerm);
+        schedulePauseStateSync(sessionId, runtimeTerm);
       });
       terminalMapRef.current.set(sessionId, term);
       fitMapRef.current.set(sessionId, fit);
@@ -210,7 +289,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     isAtBottom,
     resizePty,
     setPausedByScroll,
-    syncPauseStateWithViewport,
+    schedulePauseStateSync,
     queueInput,
   ]);
 
@@ -221,6 +300,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     setPausedOutput,
     appendPendingOutput,
     flushPendingOutput,
+    writeTerminalOutput,
     setPausedByScroll,
     syncPauseStateWithViewport,
     fitTerminal,

@@ -30,10 +30,10 @@ type UseAppBootstrapParams = {
   reconnectingTabRef: MutableRefObject<Set<number>>;
   terminalMapRef: MutableRefObject<Map<number, import('xterm').Terminal>>;
   appendPendingOutput: (sessionId: number, data: string) => void;
+  writeTerminalOutput: (sessionId: number, data: string, term?: import('xterm').Terminal) => void;
   getPausedByScroll: (sessionId: number) => boolean;
   isAtBottom: (term: import('xterm').Terminal) => boolean;
   setPausedByScroll: (sessionId: number, paused: boolean, term?: import('xterm').Terminal) => void;
-  syncPauseStateWithViewport: (sessionId: number, term?: import('xterm').Terminal) => void;
   fitTerminalStabilized: (sessionId: number) => void;
   updateTransferRow: (payload: SftpTransferProgress) => void;
   markTransferBatchComplete: (payload: SftpTransferBatchResult) => Promise<void> | void;
@@ -55,10 +55,10 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     reconnectingTabRef,
     terminalMapRef,
     appendPendingOutput,
+    writeTerminalOutput,
     getPausedByScroll,
     isAtBottom,
     setPausedByScroll,
-    syncPauseStateWithViewport,
     fitTerminalStabilized,
     updateTransferRow,
     markTransferBatchComplete,
@@ -77,10 +77,10 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
 
   const handlerRef = useRef({
       appendPendingOutput,
+      writeTerminalOutput,
       getPausedByScroll,
       isAtBottom,
       setPausedByScroll,
-      syncPauseStateWithViewport,
       fitTerminalStabilized,
       updateTransferRow,
       markTransferBatchComplete,
@@ -90,10 +90,10 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
   useEffect(() => {
     handlerRef.current = {
       appendPendingOutput,
+      writeTerminalOutput,
       getPausedByScroll,
       isAtBottom,
       setPausedByScroll,
-      syncPauseStateWithViewport,
       fitTerminalStabilized,
       updateTransferRow,
       markTransferBatchComplete,
@@ -101,10 +101,10 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     };
   }, [
     appendPendingOutput,
+    writeTerminalOutput,
     getPausedByScroll,
     isAtBottom,
     setPausedByScroll,
-    syncPauseStateWithViewport,
     fitTerminalStabilized,
     updateTransferRow,
     markTransferBatchComplete,
@@ -138,14 +138,13 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
       if (pausedFlag) {
         if (handlers.isAtBottom(term)) {
           handlers.setPausedByScroll(sessionId, false, term);
-          term.write(cleanData);
-          requestAnimationFrame(() => handlers.syncPauseStateWithViewport(sessionId, term));
+          handlers.writeTerminalOutput(sessionId, cleanData, term);
           return;
         }
         handlers.appendPendingOutput(sessionId, cleanData);
         return;
       }
-      term.write(cleanData);
+      handlers.writeTerminalOutput(sessionId, cleanData, term);
     });
     const unClosed = window.terminalApi.onSshClosed(({ sessionId }) => {
       disconnectedByTabRef.current.set(sessionId, true);
