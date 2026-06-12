@@ -1,7 +1,8 @@
 import { memo, useRef, type MutableRefObject } from 'react';
 import type { Terminal } from 'xterm';
 import type { Settings } from '../types';
-import { hasMultilineInput, normalizeTerminalPaste } from '../utils/terminalInput';
+import { hasMultilineInput, prepareTerminalPaste } from '../utils/terminalInput';
+import { getTerminalSelectionText } from '../utils/terminalSelection';
 
 type TerminalZoneProps = {
   activeSessionId: number | null;
@@ -42,10 +43,15 @@ function TerminalZoneInner(props: TerminalZoneProps) {
 
   const pasteClipboardText = async (text: string) => {
     if (!activeSessionId || !text) return;
+    const term = terminalMapRef.current.get(activeSessionId);
     if (settings.behavior.multilineWarning && hasMultilineInput(text)) {
       if (!(await askConfirm('检测到多行内容，确认粘贴到终端吗？'))) return;
     }
-    await window.terminalApi.sshSend({ sessionId: activeSessionId, input: normalizeTerminalPaste(text) });
+    await window.terminalApi.sshSend({
+      sessionId: activeSessionId,
+      input: prepareTerminalPaste(text, !!term?.modes.bracketedPasteMode),
+    });
+    term?.focus();
   };
 
   return (
@@ -61,6 +67,16 @@ function TerminalZoneInner(props: TerminalZoneProps) {
           event.stopPropagation();
           const text = event.clipboardData.getData('text');
           void pasteClipboardText(text);
+        }}
+        onCopyCapture={(event) => {
+          if (!activeSessionId) return;
+          const term = terminalMapRef.current.get(activeSessionId);
+          if (!term?.hasSelection()) return;
+          const selected = getTerminalSelectionText(term);
+          if (!selected) return;
+          event.clipboardData.setData('text/plain', selected);
+          event.preventDefault();
+          requestAnimationFrame(() => term.focus());
         }}
         onWheel={scheduleViewportPauseSync}
         onMouseUp={scheduleViewportPauseSync}

@@ -5,6 +5,7 @@ import { WebLinksAddon } from 'xterm-addon-web-links';
 import type { MutableRefObject } from 'react';
 import type { Settings } from '../types';
 import { normalizeTerminalDataInput } from '../utils/terminalInput';
+import { getTerminalSelectionText } from '../utils/terminalSelection';
 
 const MAX_TERMINAL_WRITE_CHUNK = 64 * 1024;
 const IMMEDIATE_TERMINAL_WRITE_CHUNK = 2 * 1024;
@@ -36,6 +37,8 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const pendingInputTimerRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const reconnectHandlerRef = useRef<((tabId: number) => void) | null>(null);
   const autoCopySelectionRef = useRef<Map<number, boolean>>(new Map());
+  const selectionCopyTimerRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const lastCopiedSelectionRef = useRef<Map<number, string>>(new Map());
   const [pausedOutput, setPausedOutput] = useState(false);
 
   const setReconnectHandler = useCallback((handler: (tabId: number) => void) => {
@@ -67,6 +70,34 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     const timer = setTimeout(() => flushPendingInput(sessionId), 4);
     pendingInputTimerRef.current.set(sessionId, timer);
   }, [flushPendingInput]);
+
+  const scheduleSelectionCopy = useCallback((sessionId: number, term: Terminal) => {
+    const oldTimer = selectionCopyTimerRef.current.get(sessionId);
+    if (oldTimer) {
+      clearTimeout(oldTimer);
+      selectionCopyTimerRef.current.delete(sessionId);
+    }
+    if (!autoCopySelectionRef.current.get(sessionId)) return;
+    const selected = getTerminalSelectionText(term);
+    if (!selected) return;
+    const timer = setTimeout(async () => {
+      selectionCopyTimerRef.current.delete(sessionId);
+      if (!autoCopySelectionRef.current.get(sessionId)) return;
+      const latest = getTerminalSelectionText(term);
+      if (!latest || latest === lastCopiedSelectionRef.current.get(sessionId)) return;
+      try {
+        await navigator.clipboard.writeText(latest);
+        lastCopiedSelectionRef.current.set(sessionId, latest);
+      } catch (error) {
+        console.warn('[Terminal] Failed to copy selection:', error);
+      } finally {
+        if (activeSessionIdRef.current === sessionId) {
+          requestAnimationFrame(() => term.focus());
+        }
+      }
+    }, 80);
+    selectionCopyTimerRef.current.set(sessionId, timer);
+  }, [activeSessionIdRef]);
 
   const isAtBottom = useCallback((term: Terminal): boolean => term.buffer.active.viewportY >= term.buffer.active.baseY, []);
 
@@ -249,12 +280,9 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
       term.onResize(({ cols, rows }) => {
         resizePty({ sessionId, cols, rows }).catch(() => null);
       });
-      term.onSelectionChange(async () => {
+      term.onSelectionChange(() => {
         if (!runtimeTerm) return;
-        if (!autoCopySelectionRef.current.get(sessionId)) return;
-        const selected = runtimeTerm.getSelection();
-        if (!selected) return;
-        await navigator.clipboard.writeText(selected);
+        scheduleSelectionCopy(sessionId, runtimeTerm);
       });
       term.onScroll(() => {
         schedulePauseStateSync(sessionId, runtimeTerm);
