@@ -147,6 +147,7 @@ declare global {
       toggleMaximizeWindow: () => Promise<boolean>;
       isMaximizedWindow: () => Promise<boolean>;
       closeWindow: () => Promise<void>;
+      writeClipboardText: (text: string) => Promise<boolean>;
       onMaximizedChanged: (cb: (maximized: boolean) => void) => () => void;
       setMetricsSession: (sessionId: number | null) => Promise<boolean>;
 

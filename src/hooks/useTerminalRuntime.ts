@@ -38,7 +38,6 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const reconnectHandlerRef = useRef<((tabId: number) => void) | null>(null);
   const autoCopySelectionRef = useRef<Map<number, boolean>>(new Map());
   const selectionCopyTimerRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
-  const lastCopiedSelectionRef = useRef<Map<number, string>>(new Map());
   const [pausedOutput, setPausedOutput] = useState(false);
 
   const setReconnectHandler = useCallback((handler: (tabId: number) => void) => {
@@ -84,10 +83,9 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
       selectionCopyTimerRef.current.delete(sessionId);
       if (!autoCopySelectionRef.current.get(sessionId)) return;
       const latest = getTerminalSelectionText(term);
-      if (!latest || latest === lastCopiedSelectionRef.current.get(sessionId)) return;
+      if (!latest) return;
       try {
-        await navigator.clipboard.writeText(latest);
-        lastCopiedSelectionRef.current.set(sessionId, latest);
+        await window.terminalApi.writeClipboardText(latest);
       } catch (error) {
         console.warn('[Terminal] Failed to copy selection:', error);
       } finally {

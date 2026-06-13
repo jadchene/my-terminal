@@ -76,6 +76,7 @@ function TerminalZoneInner(props: TerminalZoneProps) {
           if (!selected) return;
           event.clipboardData.setData('text/plain', selected);
           event.preventDefault();
+          void window.terminalApi.writeClipboardText(selected);
           requestAnimationFrame(() => term.focus());
         }}
         onWheel={scheduleViewportPauseSync}

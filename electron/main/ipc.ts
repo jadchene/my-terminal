@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -103,6 +103,10 @@ export function registerIpc() {
     return sharedState.mainWindow.isMaximized();
   });
   ipcMain.handle('window:close', () => sharedState.mainWindow?.close());
+  ipcMain.handle('clipboard:write-text', async (_, text: string) => {
+    clipboard.writeText(String(text || ''));
+    return true;
+  });
   ipcMain.handle('metrics:set-session', async (_, sessionId: number | null) => {
     sharedState.metricsSessionId = sessionId;
     sharedState.metricsInactiveSent = false;

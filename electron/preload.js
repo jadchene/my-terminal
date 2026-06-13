@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('terminalApi', {
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   isMaximizedWindow: () => ipcRenderer.invoke('window:is-maximized'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
+  writeClipboardText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
   onMaximizedChanged: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('window:maximized-changed', handler);
