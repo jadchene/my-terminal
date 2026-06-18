@@ -2,58 +2,28 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-My Terminal is a desktop SSH client built with Electron + React. It combines terminal sessions, SFTP file management, and remote system metrics in one local app.
+My Terminal is a local desktop SSH client built with Electron, React, TypeScript, and Vite. It combines SSH terminal tabs, session management, SFTP file operations, and remote system metrics in one Windows-focused app.
 
 ## Features
 
-- SSH terminal based on `xterm.js`
-- Multiple tabs per server profile
-- Session tree with folder grouping
-- SFTP file browser
-- SFTP batch upload/download (files and directories)
-- Right-click context actions (rename/delete/download/edit)
-- Remote metrics panel (CPU / memory / network / disk / GPU)
-- Persistent app settings (theme, fonts, behavior, sidebar state)
-- Local storage with SQLite
+- SSH terminal sessions powered by `xterm.js`.
+- Multiple terminal tabs, including multiple connections to the same saved session.
+- Session tree with folders and a configurable default session.
+- SFTP browser with create, rename, delete, upload, download, and batch transfer support.
+- Drag-and-drop upload and multi-file or directory transfer workflows.
+- Remote metrics panel for CPU, memory, network, disk, system, and NVIDIA GPU data when available.
+- Persistent settings for theme colors, fonts, terminal behavior, sidebar state, hidden files, and download directory.
+- Local SQLite storage for sessions, folders, and app settings.
+- Password storage through the OS credential store via `keytar` when "remember password" is enabled.
 
-## Screens / Modules
+## Why Use It
 
-- Top bar: window controls, app menu, sidebar toggle
-- Left sidebar:
-- Session tree tab
-- SFTP tab
-- Status metrics tab
-- Main area: terminal tabs + terminal output
-- In-app dialogs: session edit, confirmations, prompts, settings
+- Keep terminal, SFTP, and server status in one local app instead of switching between separate tools.
+- Store common SSH sessions and group them by folder.
+- Use SFTP side-by-side with the active SSH session.
+- Keep runtime data next to the app directory, which makes portable unpacked builds easier to inspect and back up.
 
-## Tech Stack
-
-- Electron
-- React + Vite
-- TypeScript
-- `ssh2`
-- `ssh2-sftp-client`
-- `xterm` + addons
-- SQLite3
-
-## Requirements
-
-- Node.js `>=18`
-- npm `>=9`
-- Windows (current target for packaging)
-
-## Project Structure
-
-```text
-electron/          Electron main process + preload
-src/               React renderer source
-dist/              Renderer build output
-dist-electron/     Main process build output
-release/           Packaged output
-user-data/         Runtime data (config, db, cache)
-```
-
-## Local Development
+## Quick Start
 
 Install dependencies:
 
@@ -61,70 +31,110 @@ Install dependencies:
 npm install
 ```
 
-Start renderer + Electron together:
+Start the renderer and Electron app together:
 
 ```bash
 npm run dev
 ```
 
-## Build
+## Basic Usage
 
-Build renderer and electron:
+1. Create a session with name, host, port, username, and password.
+2. Choose whether the password should be remembered in the OS credential store.
+3. Open the session from the session tree to create a terminal tab.
+4. Use the SFTP tab to browse and transfer files for the active session.
+5. Use the Status tab to view remote metrics for the active or selected session.
+6. Adjust fonts, colors, sidebar behavior, hidden-file display, and download directory from Settings.
+
+## SSH and SFTP
+
+Session records store the connection metadata in SQLite. Remembered passwords are migrated out of SQLite and stored through `keytar`; public session data returned to the renderer does not include the password.
+
+SFTP operations require an active SSH session. Downloads use the configured default download directory when set, otherwise the OS downloads directory. Batch transfers emit progress events and can be cancelled while running.
+
+## Remote Metrics
+
+Remote metrics are collected over the active SSH connection. The app reads Linux system files and commands such as:
+
+- `/proc/stat`
+- `/proc/cpuinfo`
+- `/proc/meminfo`
+- `/proc/net/dev`
+- `/proc/diskstats`
+- `df`
+- `hostname`
+- `ip`
+- `lscpu`
+- `nvidia-smi` when available
+
+Metrics are best-effort. Missing commands or unsupported remote systems may show partial or empty metrics while the SSH terminal and SFTP features continue to work.
+
+## Runtime Data
+
+In development, runtime data is stored in the project root. In packaged builds, it is stored next to the executable.
+
+Default runtime files:
+
+```text
+app.db
+user-data/window-state.json
+```
+
+This app intentionally avoids forcing its database and window state into `AppData/Roaming` for unpacked local use.
+
+## Configuration
+
+Settings are stored in SQLite under the `app_setting` table.
+
+Configurable areas:
+
+- UI background and foreground colors
+- UI and terminal font family and size
+- Terminal cursor style, blink, and width
+- Auto-copy selection
+- Right-click paste
+- Multi-line paste warning
+- Default download directory
+- Single-instance behavior
+- Optional input-method switch behavior
+- Sidebar visibility and width
+- SFTP panel visibility
+- Hidden files display
+
+## Development
+
+```bash
+npm install
+npm run dev
+```
+
+Build renderer and Electron main process:
 
 ```bash
 npm run build
 ```
 
-## Package (Unpacked)
+Run the built Electron entry:
 
-Generate unpacked package:
+```bash
+npm start
+```
+
+## Packaging
+
+Create an unpacked Windows build:
 
 ```bash
 npm run pack:unpacked
 ```
 
-Final output directory:
-
-```text
-release/my-terminal
-```
-
-Executable:
+Output:
 
 ```text
 release/my-terminal/my-terminal.exe
 ```
 
-## Runtime Data
-
-By default, runtime files are placed near the app runtime directory:
-
-- `user-data/`
-- `config.json`
-- `app.db`
-
-This design avoids forcing data into `C:\Users\<name>\AppData\Roaming`.
-
-## Configuration
-
-Settings include:
-
-- UI font family + size
-- Terminal font family + size
-- Foreground/background colors
-- Sidebar width and visibility
-- Hidden files toggle for SFTP
-- Default download directory
-
-## Known Notes
-
-- Packaging currently targets Windows.
-- Some very large frontend chunks may trigger Vite size warnings during build.
-- If old packaged output is locked by a running process, package to a new directory.
-
-## Version
-
-Current release version: `1.0.0`
+If a previous packaged executable is still running, close it before packaging so the output directory can be replaced.
 
 ## License
 

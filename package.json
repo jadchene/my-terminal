@@ -1,7 +1,7 @@
 {
   "name": "my-terminal",
   "version": "1.0.0",
-  "description": "Electron SSH terminal with SFTP and system monitor",
+  "description": "Local Electron SSH terminal with SFTP file management and remote system metrics.",
   "main": "dist-electron/electron/main.js",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
@@ -14,9 +14,23 @@
     "preview": "vite preview",
     "start": "npm run build:electron && electron dist-electron/electron/main.js"
   },
-  "keywords": [],
+  "keywords": [
+    "ssh",
+    "terminal",
+    "sftp",
+    "electron",
+    "desktop"
+  ],
   "author": "jadchene",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jadchene/my-terminal.git"
+  },
+  "homepage": "https://github.com/jadchene/my-terminal#readme",
+  "bugs": {
+    "url": "https://github.com/jadchene/my-terminal/issues"
+  },
   "build": {
     "appId": "com.myterminal.app",
     "directories": {
