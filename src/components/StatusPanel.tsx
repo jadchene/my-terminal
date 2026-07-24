@@ -42,6 +42,7 @@ export function StatusPanel({ activeSessionId, currentMetrics }: StatusPanelProp
             <div className="status-title">CPU</div>
             {renderStatusRow('名称', currentMetrics.cpuName || '--')}
             {renderStatusRow('占用', `${currentMetrics.cpu}%`)}
+            {renderStatusRow('温度', currentMetrics.cpuTemp != null ? `${currentMetrics.cpuTemp}°C` : '--')}
             {renderStatusRow('核心', String(currentMetrics.cpuCores || '--'))}
           </div>
           <div className="status-group">
@@ -75,6 +76,7 @@ export function StatusPanel({ activeSessionId, currentMetrics }: StatusPanelProp
                 {currentMetrics.gpu.items.map((gpu) => (
                   <div key={`${gpu.index}-${gpu.name}`} className="gpu-item">
                     {renderStatusRow(`GPU${gpu.index}`, gpu.name)}
+                    {renderStatusRow('温度', `${gpu.temperature}°C`)}
                     {renderStatusRow('显存', `${gpu.memoryUsedGb}GB / ${gpu.memoryTotalGb}GB (${gpu.memoryPercent}%)`)}
                     {renderStatusRow('负载', `${gpu.load}%`)}
                   </div>

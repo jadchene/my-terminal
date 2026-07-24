@@ -52,6 +52,7 @@ export type Metrics = {
   cpu: number;
   cpuName: string;
   cpuCores: number;
+  cpuTemp: number | null;
   memory: {
     usedGb: number;
     totalGb: number;
@@ -79,6 +80,7 @@ export type Metrics = {
         items: Array<{
           index: number;
           name: string;
+          temperature: number;
           memoryUsedGb: number;
           memoryTotalGb: number;
           memoryPercent: number;

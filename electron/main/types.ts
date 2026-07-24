@@ -107,6 +107,7 @@ export type RemoteMetricsPayload = {
   cpu: number;
   cpuName: string;
   cpuCores: number;
+  cpuTemp: number | null;
   memory: { usedGb: number; totalGb: number; percent: number };
   network: { upload: number; download: number; ips: string[] };
   disk: { totalGb: number; usedGb: number; percent: number; upload: number; download: number };
@@ -117,6 +118,7 @@ export type RemoteMetricsPayload = {
         items: Array<{
           index: number;
           name: string;
+          temperature: number;
           memoryUsedGb: number;
           memoryTotalGb: number;
           memoryPercent: number;

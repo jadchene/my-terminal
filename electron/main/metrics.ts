@@ -24,6 +24,7 @@ export function subscribeMetrics() {
             cpu: 0,
             cpuName: '',
             cpuCores: 0,
+            cpuTemp: null as number | null,
             memory: { usedGb: 0, totalGb: 0, percent: 0 },
             network: { upload: 0, download: 0, ips: [] },
             disk: { totalGb: 0, usedGb: 0, percent: 0, upload: 0, download: 0 },
@@ -177,14 +178,16 @@ export function parseGpu(lines: string[]) {
       const raw = String(line || '').trim();
       if (!raw) return null;
       const parts = raw.split(',').map((x) => x.trim());
-      if (parts.length < 4) return null;
+      if (parts.length < 5) return null;
       const name = parts[0];
-      const load = Number(parts[1]) || 0;
-      const memUsedMb = Number(parts[2]) || 0;
-      const memTotalMb = Number(parts[3]) || 0;
+      const temperature = Number(parts[1]) || 0;
+      const load = Number(parts[2]) || 0;
+      const memUsedMb = Number(parts[3]) || 0;
+      const memTotalMb = Number(parts[4]) || 0;
       return {
         index,
         name,
+        temperature: Number(temperature.toFixed(1)),
         memoryUsedGb: Number((memUsedMb / 1024).toFixed(2)),
         memoryTotalGb: Number((memTotalMb / 1024).toFixed(2)),
         memoryPercent: memTotalMb ? Number(((memUsedMb / memTotalMb) * 100).toFixed(1)) : 0,
@@ -261,6 +264,54 @@ export function parseCoreCount(lines: string[]): number {
   return Number(value.replace(/[^0-9]/g, '')) || 0;
 }
 
+export function parseCpuTemp(lines: string[]): number | null {
+  // Hwmon device names known to carry CPU package temperature.
+  const CPU_HWMON_NAMES = new Set(['coretemp', 'k10temp', 'cpu_thermal', 'acpitz', 'zenpower']);
+  // Labels that indicate a package-level (not per-core) reading.
+  const PACKAGE_LABELS = ['package', 'tctl', 'tdie', 'physical', 'cpu'];
+
+  type DeviceTemps = { name: string; temps: Array<{ label: string; value: number }> };
+  const devices: DeviceTemps[] = [];
+  let current: DeviceTemps | null = null;
+
+  for (const raw of lines) {
+    const line = String(raw || '').trim();
+    if (!line) continue;
+    if (line.startsWith('NAME:')) {
+      const name = line.slice(5).trim().toLowerCase();
+      current = { name, temps: [] };
+      devices.push(current);
+      continue;
+    }
+    if (line.startsWith('T:') && current) {
+      const rest = line.slice(2);
+      const colon = rest.indexOf(':');
+      const label = colon >= 0 ? rest.slice(0, colon).trim().toLowerCase() : '';
+      const valStr = colon >= 0 ? rest.slice(colon + 1).trim() : rest.trim();
+      const value = Number(valStr) || 0;
+      if (value > 0) {
+        current.temps.push({ label, value });
+      }
+    }
+  }
+
+  // Prefer cpu-specific devices, then fall back to any device.
+  const cpuDevice =
+    devices.find((d) => CPU_HWMON_NAMES.has(d.name) && d.temps.length > 0) ||
+    devices.find((d) => d.temps.length > 0);
+
+  if (!cpuDevice) return null;
+
+  // Look for a package-level reading.
+  for (const label of PACKAGE_LABELS) {
+    const match = cpuDevice.temps.find((t) => t.label.includes(label));
+    if (match) return Number((match.value / 1000).toFixed(1));
+  }
+
+  // Fallback: first reading from the CPU device.
+  return Number((cpuDevice.temps[0].value / 1000).toFixed(1));
+}
+
 export function parseIps(lines: string[]): string[] {
   const text = lines.join(' ');
   const matched = text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || [];
@@ -312,7 +363,8 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
         'echo "__NET__"; (cat /proc/net/dev 2>/dev/null || true)',
         'echo "__DISK__"; (cat /proc/diskstats 2>/dev/null || true)',
         'echo "__FS__"; (df -B1 -P -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null || true)',
-        'echo "__GPU__"; (command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits || true)',
+        'echo "__CPUTEMP__"; (for d in /sys/class/hwmon/hwmon*; do [ -d "$d" ] || continue; n=$(cat "$d/name" 2>/dev/null || echo ""); echo "NAME:$n"; for f in "$d"/temp*_input; do [ -f "$f" ] || continue; b="${f%_input}"; l=$(cat "${b}_label" 2>/dev/null || echo ""); echo "T:$l:$(cat "$f" 2>/dev/null || echo 0)"; done; done)',
+        'echo "__GPU__"; (command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits || true)',
       ].join('; ')
     : [
         'echo "__CPU__"; head -n1 /proc/stat 2>/dev/null || echo ""',
@@ -330,6 +382,7 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
     LSCPU: [],
     CPUFREQ: [],
     CPUFREQMAX: [],
+    CPUTEMP: [],
     SYS: [],
     MEM: [],
     IP: [],
@@ -345,6 +398,7 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
     else if (line === '__LSCPU__') current = 'LSCPU';
     else if (line === '__CPUFREQ__') current = 'CPUFREQ';
     else if (line === '__CPUFREQMAX__') current = 'CPUFREQMAX';
+    else if (line === '__CPUTEMP__') current = 'CPUTEMP';
     else if (line === '__SYS__') current = 'SYS';
     else if (line === '__MEM__') current = 'MEM';
     else if (line === '__IP__') current = 'IP';
@@ -415,6 +469,9 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
   const diskPercent = fsUsage.total
     ? Number(fsUsage.percent.toFixed(1))
     : (cachedPayload?.disk.percent || 0);
+  const cpuTemp = section.CPUTEMP.length > 0
+    ? parseCpuTemp(section.CPUTEMP)
+    : (cachedPayload?.cpuTemp ?? null);
   const gpu: RemoteMetricsPayload['gpu'] = section.GPU.length > 0
     ? (parseGpu(section.GPU) as RemoteMetricsPayload['gpu'])
     : (cachedPayload?.gpu || { available: false, items: [] });
@@ -424,6 +481,7 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
     cpu,
     cpuName,
     cpuCores,
+    cpuTemp,
     memory: {
       usedGb: Number((memUsed / 1024 / 1024 / 1024).toFixed(2)),
       totalGb: memoryTotalGb,
