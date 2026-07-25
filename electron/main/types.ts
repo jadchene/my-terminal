@@ -123,6 +123,8 @@ export type RemoteMetricsPayload = {
           memoryTotalGb: number;
           memoryPercent: number;
           load: number;
+          powerDraw: number | null;
+          powerLimit: number | null;
         }>;
       };
 };

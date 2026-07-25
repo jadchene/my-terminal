@@ -85,6 +85,8 @@ export type Metrics = {
           memoryTotalGb: number;
           memoryPercent: number;
           load: number;
+          powerDraw: number | null;
+          powerLimit: number | null;
         }>;
       };
 };

@@ -184,6 +184,8 @@ export function parseGpu(lines: string[]) {
       const load = Number(parts[2]) || 0;
       const memUsedMb = Number(parts[3]) || 0;
       const memTotalMb = Number(parts[4]) || 0;
+      const powerDrawRaw = parts.length >= 7 ? Number(parts[5]) : NaN;
+      const powerLimitRaw = parts.length >= 7 ? Number(parts[6]) : NaN;
       return {
         index,
         name,
@@ -192,6 +194,8 @@ export function parseGpu(lines: string[]) {
         memoryTotalGb: Number((memTotalMb / 1024).toFixed(2)),
         memoryPercent: memTotalMb ? Number(((memUsedMb / memTotalMb) * 100).toFixed(1)) : 0,
         load: Number(load.toFixed(1)),
+        powerDraw: Number.isFinite(powerDrawRaw) ? Number(powerDrawRaw.toFixed(1)) : null,
+        powerLimit: Number.isFinite(powerLimitRaw) ? Number(powerLimitRaw.toFixed(1)) : null,
       };
     })
     .filter((item): item is NonNullable<typeof item> => !!item);
@@ -364,7 +368,7 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
         'echo "__DISK__"; (cat /proc/diskstats 2>/dev/null || true)',
         'echo "__FS__"; (df -B1 -P -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null || true)',
         'echo "__CPUTEMP__"; (for d in /sys/class/hwmon/hwmon*; do [ -d "$d" ] || continue; n=$(cat "$d/name" 2>/dev/null || echo ""); echo "NAME:$n"; for f in "$d"/temp*_input; do [ -f "$f" ] || continue; b="${f%_input}"; l=$(cat "${b}_label" 2>/dev/null || echo ""); echo "T:$l:$(cat "$f" 2>/dev/null || echo 0)"; done; done)',
-        'echo "__GPU__"; (command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits || true)',
+        'echo "__GPU__"; (command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,power.limit --format=csv,noheader,nounits || true)',
       ].join('; ')
     : [
         'echo "__CPU__"; head -n1 /proc/stat 2>/dev/null || echo ""',

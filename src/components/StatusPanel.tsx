@@ -78,7 +78,7 @@ export function StatusPanel({ activeSessionId, currentMetrics }: StatusPanelProp
                     {renderStatusRow(`GPU${gpu.index}`, gpu.name)}
                     {renderStatusRow('温度', `${gpu.temperature}°C`)}
                     {renderStatusRow('显存', `${gpu.memoryUsedGb}GB / ${gpu.memoryTotalGb}GB (${gpu.memoryPercent}%)`)}
-                    {renderStatusRow('负载', `${gpu.load}%`)}
+                    {renderStatusRow('负载', `${gpu.load}%,${gpu.powerDraw != null ? `${gpu.powerDraw}W` : '--'}/${gpu.powerLimit != null ? `${gpu.powerLimit}W` : '--'}`)}
                   </div>
                 ))}
               </>
