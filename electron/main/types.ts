@@ -106,7 +106,8 @@ export type RemoteMetricsPayload = {
   system: { version: string; arch: string };
   cpu: number;
   cpuName: string;
-  cpuCores: number;
+  cpuPhysicalCores: number;
+  cpuLogicalCores: number;
   cpuTemp: number | null;
   memory: { usedGb: number; totalGb: number; percent: number };
   network: { upload: number; download: number; ips: string[] };

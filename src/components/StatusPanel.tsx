@@ -43,7 +43,10 @@ export function StatusPanel({ activeSessionId, currentMetrics }: StatusPanelProp
             {renderStatusRow('名称', currentMetrics.cpuName || '--')}
             {renderStatusRow('占用', `${currentMetrics.cpu}%`)}
             {renderStatusRow('温度', currentMetrics.cpuTemp != null ? `${currentMetrics.cpuTemp}°C` : '--')}
-            {renderStatusRow('核心', String(currentMetrics.cpuCores || '--'))}
+            {renderStatusRow(
+              '核心',
+              `${currentMetrics.cpuPhysicalCores || '--'}/${currentMetrics.cpuLogicalCores || '--'}`,
+            )}
           </div>
           <div className="status-group">
             <div className="status-title">内存</div>

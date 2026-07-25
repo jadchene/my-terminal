@@ -23,7 +23,8 @@ export function subscribeMetrics() {
             system: { version: '', arch: '' },
             cpu: 0,
             cpuName: '',
-            cpuCores: 0,
+            cpuPhysicalCores: 0,
+            cpuLogicalCores: 0,
             cpuTemp: null as number | null,
             memory: { usedGb: 0, totalGb: 0, percent: 0 },
             network: { upload: 0, download: 0, ips: [] },
@@ -49,7 +50,8 @@ export function subscribeMetrics() {
           system: { version: '', arch: '' },
           cpu: 0,
           cpuName: '',
-          cpuCores: 0,
+          cpuPhysicalCores: 0,
+          cpuLogicalCores: 0,
           memory: { usedGb: 0, totalGb: 0, percent: 0 },
           network: { upload: 0, download: 0, ips: [] },
           disk: { totalGb: 0, usedGb: 0, percent: 0, upload: 0, download: 0 },
@@ -70,12 +72,31 @@ export function parseCpu(line: string): { total: number; idle: number } {
   return { total, idle };
 }
 
-export function parseCpuInfo(lines: string[]): { name: string; cores: number; mhz: number } {
-  let cores = 0;
+export function parseCpuInfo(lines: string[]): {
+  name: string;
+  physicalCores: number;
+  logicalCores: number;
+  mhz: number;
+} {
+  let logicalCores = 0;
   let name = '';
+  let physicalId = '';
+  let coreId = '';
+  const physicalCoreIds = new Set<string>();
   const mhzValues: number[] = [];
   const looksLikeCpuName = (input: string) => /[a-zA-Z\u4e00-\u9fa5]/.test(String(input || '').trim());
+  const commitPhysicalCore = () => {
+    if (coreId) {
+      physicalCoreIds.add(`${physicalId || '0'}:${coreId}`);
+    }
+    physicalId = '';
+    coreId = '';
+  };
   for (const line of lines) {
+    if (!line.trim()) {
+      commitPhysicalCore();
+      continue;
+    }
     const matched = line.match(/:\s*(.+)$/);
     const lineKey = line.split(':')[0]?.trim().toLowerCase() || '';
     const lineValue = matched?.[1]?.trim() || '';
@@ -92,8 +113,14 @@ export function parseCpuInfo(lines: string[]): { name: string; cores: number; mh
         name = lineValue;
       }
     }
-    if (line.startsWith('processor')) {
-      cores += 1;
+    if (lineKey === 'processor') {
+      logicalCores += 1;
+    }
+    if (lineKey === 'physical id') {
+      physicalId = lineValue;
+    }
+    if (lineKey === 'core id') {
+      coreId = lineValue;
     }
     if (lineKey === 'cpu mhz' || lineKey === 'clock') {
       const parsed = Number(lineValue.replace(/[^0-9.]/g, '')) || 0;
@@ -102,8 +129,14 @@ export function parseCpuInfo(lines: string[]): { name: string; cores: number; mh
       }
     }
   }
+  commitPhysicalCore();
   const mhz = mhzValues.length > 0 ? mhzValues.reduce((acc, n) => acc + n, 0) / mhzValues.length : 0;
-  return { name, cores, mhz: Number(mhz.toFixed(0)) };
+  return {
+    name,
+    physicalCores: physicalCoreIds.size,
+    logicalCores,
+    mhz: Number(mhz.toFixed(0)),
+  };
 }
 
 export function parseMem(lines: string[]): { total: number; available: number } {
@@ -268,6 +301,21 @@ export function parseCoreCount(lines: string[]): number {
   return Number(value.replace(/[^0-9]/g, '')) || 0;
 }
 
+export const parsePhysicalCoreCount = (lines: string[]): number => {
+  let coresPerSocket = 0;
+  let sockets = 0;
+  for (const raw of lines) {
+    const line = String(raw || '').trim();
+    if (!line.includes(':')) continue;
+    const [keyRaw, ...valueParts] = line.split(':');
+    const key = keyRaw.trim().toLowerCase();
+    const value = Number(valueParts.join(':').trim().replace(/[^0-9]/g, '')) || 0;
+    if (key === 'core(s) per socket') coresPerSocket = value;
+    if (key === 'socket(s)') sockets = value;
+  }
+  return coresPerSocket > 0 && sockets > 0 ? coresPerSocket * sockets : 0;
+};
+
 export function parseCpuTemp(lines: string[]): number | null {
   // Hwmon device names known to carry CPU package temperature.
   const CPU_HWMON_NAMES = new Set(['coretemp', 'k10temp', 'cpu_thermal', 'acpitz', 'zenpower']);
@@ -417,7 +465,11 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
   const cpuStat = parseCpu(cpuLine);
   const cpuInfo = parseCpuInfo(section.CPUINFO);
   const cpuInfoLscpu = parseCpuInfoFromLscpu(section.LSCPU);
-  const cpuCoreCount = cpuInfo.cores || parseCoreCount(section.LSCPU);
+  const cpuLogicalCoreCount = cpuInfo.logicalCores || parseCoreCount(section.LSCPU);
+  const detectedPhysicalCoreCount = cpuInfo.physicalCores || parsePhysicalCoreCount(section.LSCPU);
+  const cpuPhysicalCoreCount = detectedPhysicalCoreCount > 0 && detectedPhysicalCoreCount <= cpuLogicalCoreCount
+    ? detectedPhysicalCoreCount
+    : 0;
   const systemInfo = parseSystem(section.SYS);
   const memStat = parseMem(section.MEM);
   const ips = parseIps(section.IP);
@@ -460,7 +512,8 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
     : (cachedPayload?.system || { version: '', arch: '' });
   const cpuName =
     cpuInfo.name || cpuInfoLscpu.name || cachedPayload?.cpuName || (system.arch ? `CPU (${system.arch})` : 'CPU');
-  const cpuCores = cpuCoreCount || cachedPayload?.cpuCores || 0;
+  const cpuLogicalCores = cpuLogicalCoreCount || cachedPayload?.cpuLogicalCores || 0;
+  const cpuPhysicalCores = cpuPhysicalCoreCount || cachedPayload?.cpuPhysicalCores || 0;
   const memoryTotalGb = memStat.total
     ? Number((memStat.total / 1024 / 1024 / 1024).toFixed(2))
     : (cachedPayload?.memory.totalGb || 0);
@@ -484,7 +537,8 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
     system,
     cpu,
     cpuName,
-    cpuCores,
+    cpuPhysicalCores,
+    cpuLogicalCores,
     cpuTemp,
     memory: {
       usedGb: Number((memUsed / 1024 / 1024 / 1024).toFixed(2)),

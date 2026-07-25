@@ -51,7 +51,8 @@ export type Metrics = {
   };
   cpu: number;
   cpuName: string;
-  cpuCores: number;
+  cpuPhysicalCores: number;
+  cpuLogicalCores: number;
   cpuTemp: number | null;
   memory: {
     usedGb: number;
