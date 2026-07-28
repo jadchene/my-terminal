@@ -1,152 +1,93 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
-import { Client } from 'ssh2';
-import SftpClient from 'ssh2-sftp-client';
-import sqlite3 from 'sqlite3';
-import keytar from 'keytar';
-import { get } from './db';
-import { sshStateMap, connectionSessionMap, connectionHomeMap, pendingCwdProbeMap, pendingPwdCaptureMap, lastKnownCwdMap } from './state';
+import type { Client } from 'ssh2';
+import { connectionHomeMap, connectionSessionMap, cwdOutputTailMap, lastKnownCwdMap } from './state';
 
-export function clearPendingCwdProbe(connectionId: number, error?: Error) {
-  const pending = pendingCwdProbeMap.get(connectionId);
-  if (!pending) return;
-  clearTimeout(pending.timer);
-  pendingCwdProbeMap.delete(connectionId);
-  if (error) {
-    pending.reject(error);
-  }
-}
+export const REMOTE_SHELL_CWD_COMMAND = 'sh -c \'connection=${SSH_CONNECTION-}; best_pid=0; best_cwd=; for proc in /proc/[0-9]*; do [ -r "$proc/environ" ] || continue; tty=$(readlink "$proc/fd/0" 2>/dev/null) || continue; case "$tty" in /dev/pts/*|/dev/tty*) ;; *) continue ;; esac; command_name=$(cat "$proc/comm" 2>/dev/null) || continue; case "$command_name" in sh|bash|dash|ash|zsh|ksh|mksh|fish|csh|tcsh|nu|pwsh) ;; *) continue ;; esac; tr "\\000" "\\n" < "$proc/environ" 2>/dev/null | grep -Fqx "SSH_CONNECTION=$connection" || continue; pid=${proc##*/}; [ "$pid" -gt "$best_pid" ] || continue; cwd=$(readlink "$proc/cwd" 2>/dev/null) || continue; best_pid=$pid; best_cwd=$cwd; done; [ -n "$best_cwd" ] && printf "%s\\n" "$best_cwd"\'';
 
-export function clearPendingPwdCapture(connectionId: number, error?: Error) {
-  const pending = pendingPwdCaptureMap.get(connectionId);
-  if (!pending) return;
-  clearTimeout(pending.timer);
-  pendingPwdCaptureMap.delete(connectionId);
-  if (error) {
-    pending.reject(error);
-  }
-}
+export const stripAnsi = (input: string): string => input.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
 
-export function stripAnsi(input: string): string {
-  return input.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
-}
-
-export function resolveHomeToken(connectionId: number, tokenPath: string): string {
+export const resolveHomeToken = (connectionId: number, tokenPath: string): string => {
   const session = connectionSessionMap.get(connectionId);
   const fallbackHome = session?.username === 'root' ? '/root' : session?.username ? `/home/${session.username}` : '/';
   const home = connectionHomeMap.get(connectionId) || fallbackHome;
   if (tokenPath === '~') return home;
   if (tokenPath.startsWith('~/')) return path.posix.normalize(path.posix.join(home, tokenPath.slice(2)));
   return tokenPath;
-}
+};
 
-export function updateCwdFromPrompt(connectionId: number, shellChunk: string) {
-  const tail = shellChunk.length > 4096 ? shellChunk.slice(-4096) : shellChunk;
-  if (!tail.includes(']')) return;
-  const clean = stripAnsi(tail);
-  const lines = clean.split(/\r?\n/);
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
+const decodeOscPath = (rawPath: string): string => {
+  try {
+    return decodeURIComponent(rawPath);
+  } catch {
+    return rawPath;
+  }
+};
+
+export const updateCwdFromPrompt = (connectionId: number, shellChunk: string): void => {
+  const previousTail = cwdOutputTailMap.get(connectionId) || '';
+  const tail = `${previousTail}${shellChunk}`.slice(-8192);
+  cwdOutputTailMap.set(connectionId, tail.slice(-4096));
+
+  const oscPattern = /\x1b\]7;file:\/\/[^/\x07\x1b]*(\/[^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+  let oscMatch: RegExpExecArray | null;
+  let candidateIndex = -1;
+  let candidatePath = '';
+  while ((oscMatch = oscPattern.exec(tail)) !== null) {
+    const oscPath = decodeOscPath(oscMatch[1]);
+    if (oscPath.startsWith('/') && oscMatch.index >= candidateIndex) {
+      candidateIndex = oscMatch.index;
+      candidatePath = oscPath;
+    }
+  }
+
+  const linePattern = /[^\r\n]+/g;
+  let lineMatch: RegExpExecArray | null;
+  while ((lineMatch = linePattern.exec(tail)) !== null) {
+    const line = stripAnsi(lineMatch[0]).trim();
     if (!line) continue;
     const matched = line.match(/\[[^\]\r\n]*?\s([~\/][^\]\r\n]*)\]\s*[#$]\s*$/);
     if (!matched?.[1]) continue;
     const cwd = resolveHomeToken(connectionId, matched[1].trim());
-    if (cwd) {
-      lastKnownCwdMap.set(connectionId, cwd);
+    if (cwd && lineMatch.index >= candidateIndex) {
+      candidateIndex = lineMatch.index;
+      candidatePath = cwd;
     }
   }
-}
+  if (candidatePath) lastKnownCwdMap.set(connectionId, candidatePath);
+};
 
-export function processShellDataForPwdCapture(connectionId: number, shellChunk: string) {
-  const pending = pendingPwdCaptureMap.get(connectionId);
-  if (!pending) return;
-  const clean = stripAnsi(shellChunk);
-  pending.buffer += `\n${clean}`;
-  if (pending.buffer.length > 20000) {
-    pending.buffer = pending.buffer.slice(-20000);
-  }
-  const lines = pending.buffer
+export const parseRemoteShellCwd = (output: string): string | null => {
+  const paths = stripAnsi(output)
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => !!line);
-  const pwdLine = [...lines].reverse().find((line) => line.startsWith('/'));
-  if (!pwdLine) return;
-  clearTimeout(pending.timer);
-  pendingPwdCaptureMap.delete(connectionId);
-  lastKnownCwdMap.set(connectionId, pwdLine);
-  pending.resolve(pwdLine);
-}
+    .filter((line) => line.startsWith('/'));
+  return paths[paths.length - 1] || null;
+};
 
-export async function getShellPwd(connectionId: number): Promise<string> {
-  const state = sshStateMap.get(connectionId);
-  if (!state?.shell) throw new Error('SSH 未连接');
-  clearPendingPwdCapture(connectionId, new Error('目录采集被新的请求中断'));
-  return new Promise<string>((resolve, reject) => {
+export const getRemoteShellCwd = (client: Client): Promise<string | null> => new Promise((resolve) => {
+  client.exec(REMOTE_SHELL_CWD_COMMAND, (error, stream) => {
+    if (error) {
+      resolve(null);
+      return;
+    }
+    let output = '';
+    let settled = false;
+    const finish = (cwd: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(cwd);
+    };
     const timer = setTimeout(() => {
-      pendingPwdCaptureMap.delete(connectionId);
-      reject(new Error('获取当前目录超时'));
-    }, 6000);
-    pendingPwdCaptureMap.set(connectionId, {
-      buffer: '',
-      timer,
-      resolve,
-      reject,
+      stream.close();
+      finish(null);
+    }, 4000);
+    timer.unref();
+    stream.on('data', (chunk: Buffer) => {
+      output += chunk.toString('utf8');
+      if (output.length > 16384) output = output.slice(-16384);
     });
-    state.shell.write('pwd\n');
+    stream.on('close', () => finish(parseRemoteShellCwd(output)));
+    stream.on('error', () => finish(null));
   });
-}
-
-export function processShellDataForCwdProbe(connectionId: number, chunk: string): string {
-  const pending = pendingCwdProbeMap.get(connectionId);
-  if (!pending) return chunk;
-  pending.buffer += chunk;
-  if (pending.buffer.length > 20000) {
-    pending.buffer = pending.buffer.slice(-20000);
-  }
-  const begin = `__CODEX_CWD_BEGIN_${pending.token}__`;
-  const end = `__CODEX_CWD_END_${pending.token}__`;
-  const endAt = pending.buffer.lastIndexOf(end);
-  const beginAt = endAt >= 0 ? pending.buffer.lastIndexOf(begin, endAt) : -1;
-  if (beginAt >= 0 && endAt > beginAt) {
-    const raw = pending.buffer.slice(beginAt + begin.length, endAt);
-    const lines = raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => !!line && !line.includes(begin) && !line.includes(end));
-    const pathLine =
-      lines.find((line) => line.startsWith('/')) ||
-      lines.find((line) => line.startsWith('~')) ||
-      lines[lines.length - 1] ||
-      '/';
-    const cwd = pathLine.trim();
-    clearTimeout(pending.timer);
-    pendingCwdProbeMap.delete(connectionId);
-    lastKnownCwdMap.set(connectionId, cwd || '/');
-    pending.resolve(cwd || '/');
-  }
-  // During probe, suppress output chunks to avoid printing probe markers in terminal.
-  return '';
-}
-
-export async function getInteractiveShellCwd(connectionId: number): Promise<string> {
-  const state = sshStateMap.get(connectionId);
-  if (!state?.shell) throw new Error('SSH 未连接');
-  clearPendingCwdProbe(connectionId, new Error('目录探测被新的请求中断'));
-  return new Promise<string>((resolve, reject) => {
-    const token = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const timer = setTimeout(() => {
-      pendingCwdProbeMap.delete(connectionId);
-      reject(new Error('获取当前目录超时'));
-    }, 8000);
-    pendingCwdProbeMap.set(connectionId, {
-      token,
-      buffer: '',
-      timer,
-      resolve,
-      reject,
-    });
-    state.shell.write(`echo "__CODEX_CWD_BEGIN_${token}__"; pwd; echo "__CODEX_CWD_END_${token}__"\n`);
-  });
-}
+});

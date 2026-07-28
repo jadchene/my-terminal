@@ -8,8 +8,7 @@ import sqlite3 from 'sqlite3';
 import keytar from 'keytar';
 import { Session } from './types';
 import { all, get } from './db';
-import { sshStateMap, sftpMap, sftpBatchControlMap, connectionSessionMap, connectionHomeMap, lastKnownCwdMap, KEYTAR_SERVICE, remoteMetricsSnapshotMap, remoteMetricsPayloadMap, sharedState } from './state';
-import { clearPendingPwdCapture, clearPendingCwdProbe } from './ssh';
+import { sshStateMap, sftpMap, sftpBatchControlMap, connectionSessionMap, connectionHomeMap, cwdOutputTailMap, lastKnownCwdMap, KEYTAR_SERVICE, remoteMetricsSnapshotMap, remoteMetricsPayloadMap, sharedState } from './state';
 
 export function toKeytarAccount(sessionId: number): string {
   return `session:${sessionId}`;
@@ -77,8 +76,6 @@ export async function cleanupConnectionState(connectionId: number) {
     }
   }
   await Promise.all(batchClientsToClose.map(async (it) => it.end().catch(() => null)));
-  clearPendingCwdProbe(connectionId, new Error('连接已关闭'));
-  clearPendingPwdCapture(connectionId, new Error('连接已关闭'));
   const sshState = sshStateMap.get(connectionId);
   if (sshState) {
     try {
@@ -90,6 +87,7 @@ export async function cleanupConnectionState(connectionId: number) {
   sshStateMap.delete(connectionId);
   connectionSessionMap.delete(connectionId);
   connectionHomeMap.delete(connectionId);
+  cwdOutputTailMap.delete(connectionId);
   lastKnownCwdMap.delete(connectionId);
   remoteMetricsSnapshotMap.delete(connectionId);
   remoteMetricsPayloadMap.delete(connectionId);

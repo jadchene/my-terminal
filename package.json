@@ -8,7 +8,7 @@
     "dev:renderer": "vite",
     "dev:electron": "npm run build:electron && wait-on tcp:5173 && electron dist-electron/electron/main.js",
     "build": "vite build && npm run build:electron",
-    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:electron": "tsc -p tsconfig.electron.json && node scripts/build-native-drag-helper.cjs",
     "pack:unpacked": "npm run build && electron-builder --dir --win",
     "postpack:unpacked": "node -e \"const fs=require('fs');const path=require('path');const src=path.join('release','win-unpacked');const dst=path.join('release','my-terminal');if(fs.existsSync(dst)) fs.rmSync(dst,{recursive:true,force:true});if(fs.existsSync(src)) fs.renameSync(src,dst);\"",
     "preview": "vite preview",
@@ -41,6 +41,9 @@
       "dist-electron/**/*",
       "electron/preload.js",
       "package.json"
+    ],
+    "asarUnpack": [
+      "dist-electron/native/**/*"
     ],
     "win": {
       "target": "nsis"

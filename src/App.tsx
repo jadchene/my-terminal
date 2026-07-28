@@ -41,17 +41,6 @@ const defaultSessionForm: SessionForm = {
   default_session: 0,
 };
 
-function stripInternalProbeOutput(data: string): string {
-  if (!data.includes('__CODEX_CWD_BEGIN_') && !data.includes('__CODEX_CWD_END_')) return data;
-  const lines = data.split(/\r?\n/);
-  const kept: string[] = [];
-  for (const line of lines) {
-    if (line.includes('__CODEX_CWD_BEGIN_') || line.includes('__CODEX_CWD_END_')) continue;
-    kept.push(line);
-  }
-  return kept.join('\n');
-}
-
 function isAuthError(message: string): boolean {
   const text = message.toLowerCase();
   return (
@@ -105,7 +94,7 @@ export default function App() {
   const sessionFolderMenuRef = useRef<HTMLDivElement>(null);
   const folderParentMenuRef = useRef<HTMLDivElement>(null);
   const cursorStyleMenuRef = useRef<HTMLDivElement>(null);
-  const sftpInternalDragRef = useRef(false);
+  const sftpInternalDragRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<number | null>(null);
   const tabsRef = useRef<Tab[]>([]);
   const sessionsRef = useRef<Session[]>([]);
@@ -176,8 +165,6 @@ export default function App() {
     selectedSftpPaths,
     sftpUploadDropOver,
     setSftpUploadDropOver,
-    sftpDownloadDropOver,
-    setSftpDownloadDropOver,
     refreshSftp,
     setSftpSelection,
     navigateSftp,
@@ -185,7 +172,6 @@ export default function App() {
     clearSftpSelection,
     clearSftpItems,
     getLocalPathsFromDrop,
-    getSftpPathsFromDrag,
     submitSftpPath,
   } = useSftpPanel({
     activeSessionId,
@@ -238,7 +224,6 @@ export default function App() {
     updateTransferRow,
     markTransferBatchComplete,
     markTransferError,
-    stripInternalProbeOutput,
   });
 
   const { reconnectTab, connectSession, closeTab } = useSessionTabs({
@@ -318,17 +303,16 @@ export default function App() {
     settings,
     setSettings,
     sftpPath,
+    sftpItems,
     selectedSftpPaths,
     setSftpPathInput,
     setSftpUploadDropOver,
-    setSftpDownloadDropOver,
     setTreeMenu,
     sftpInternalDragRef,
     refreshSftp,
     navigateSftp,
     clearSftpSelectionNow,
     getLocalPathsFromDrop,
-    getSftpPathsFromDrag,
     submitSftpPath,
     setSftpSelection,
     showAlert,
@@ -427,7 +411,7 @@ export default function App() {
             sftpPathInput={sftpPathInput}
             sftpItems={sftpItems}
             selectedSftpPaths={selectedSftpPaths}
-            dropOver={sftpUploadDropOver || sftpDownloadDropOver}
+            dropOver={sftpUploadDropOver}
             transferRows={currentTransferRows}
             formatSftpMeta={formatSftpMeta}
             sftpInteractions={sftpInteractions}

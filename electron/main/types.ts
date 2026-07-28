@@ -77,21 +77,6 @@ export type SftpProgressThrottleState = {
   total: number;
 };
 
-export type PendingCwdProbe = {
-  token: string;
-  buffer: string;
-  timer: NodeJS.Timeout;
-  resolve: (cwd: string) => void;
-  reject: (error: Error) => void;
-};
-
-export type PendingPwdCapture = {
-  buffer: string;
-  timer: NodeJS.Timeout;
-  resolve: (cwd: string) => void;
-  reject: (error: Error) => void;
-};
-
 export type RemoteMetricsSnapshot = {
   cpuTotal: number;
   cpuIdle: number;

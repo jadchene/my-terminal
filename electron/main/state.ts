@@ -6,7 +6,7 @@ import { Client } from 'ssh2';
 import SftpClient from 'ssh2-sftp-client';
 import sqlite3 from 'sqlite3';
 import keytar from 'keytar';
-import { Session, SshConnectionState, SftpBatchControl, SftpProgressThrottleState, PendingCwdProbe, PendingPwdCapture, RemoteMetricsSnapshot, RemoteMetricsPayload } from './types';
+import { Session, SshConnectionState, SftpBatchControl, SftpProgressThrottleState, RemoteMetricsSnapshot, RemoteMetricsPayload } from './types';
 
 export const sshStateMap = new Map<number, SshConnectionState>();
 
@@ -22,11 +22,9 @@ export const connectionSessionMap = new Map<number, Session>();
 
 export const connectionHomeMap = new Map<number, string>();
 
-export const pendingCwdProbeMap = new Map<number, PendingCwdProbe>();
-
-export const pendingPwdCaptureMap = new Map<number, PendingPwdCapture>();
-
 export const lastKnownCwdMap = new Map<number, string>();
+
+export const cwdOutputTailMap = new Map<number, string>();
 
 export const PASSWORD_MIGRATION_KEY = 'session_password_keytar_migrated';
 

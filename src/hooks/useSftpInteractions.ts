@@ -1,5 +1,5 @@
-import { type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { Session, Settings, TreeContextMenu } from '../types';
+import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import type { Session, Settings, SftpItem, TreeContextMenu } from '../types';
 import { getParentSftpPath } from '../utils/sftpPath';
 
 type SftpMenuPayload = Extract<TreeContextMenu, { type: 'sftp' }>;
@@ -10,17 +10,16 @@ type UseSftpInteractionsParams = {
   settings: Settings | null;
   setSettings: Dispatch<SetStateAction<Settings | null>>;
   sftpPath: string;
+  sftpItems: SftpItem[];
   selectedSftpPaths: string[];
   setSftpPathInput: Dispatch<SetStateAction<string>>;
   setSftpUploadDropOver: Dispatch<SetStateAction<boolean>>;
-  setSftpDownloadDropOver: Dispatch<SetStateAction<boolean>>;
   setTreeMenu: Dispatch<SetStateAction<TreeContextMenu | null>>;
-  sftpInternalDragRef: MutableRefObject<boolean>;
+  sftpInternalDragRef: MutableRefObject<string | null>;
   refreshSftp: (targetPath?: string) => Promise<void>;
   navigateSftp: (nextPath: string) => Promise<void>;
   clearSftpSelectionNow: () => void;
   getLocalPathsFromDrop: (event: React.DragEvent) => string[];
-  getSftpPathsFromDrag: (event: React.DragEvent) => string[];
   submitSftpPath: () => Promise<void>;
   setSftpSelection: (fullPath: string, checked: boolean, range?: boolean) => void;
   showAlert: (message: string, title?: string) => Promise<void>;
@@ -35,17 +34,16 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
     settings,
     setSettings,
     sftpPath,
+    sftpItems,
     selectedSftpPaths,
     setSftpPathInput,
     setSftpUploadDropOver,
-    setSftpDownloadDropOver,
     setTreeMenu,
     sftpInternalDragRef,
     refreshSftp,
     navigateSftp,
     clearSftpSelectionNow,
     getLocalPathsFromDrop,
-    getSftpPathsFromDrag,
     submitSftpPath,
     setSftpSelection,
     showAlert,
@@ -53,52 +51,61 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
     askConfirm,
   } = params;
 
+  useEffect(() => window.terminalApi.onSftpNativeDragEnded((event) => {
+    if (sftpInternalDragRef.current === event.token) {
+      sftpInternalDragRef.current = null;
+    }
+    if (event.error) void showAlert(event.error, 'SFTP 拖拽');
+  }), [sftpInternalDragRef, showAlert]);
+
   const onDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
     if (!activeSessionId) return;
     e.preventDefault();
+    if (sftpInternalDragRef.current) {
+      e.dataTransfer.dropEffect = 'none';
+      setSftpUploadDropOver(false);
+      return;
+    }
     e.dataTransfer.dropEffect = 'copy';
     setSftpUploadDropOver(true);
-    setSftpDownloadDropOver(false);
   };
 
   const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     if (!activeSessionId) return;
     e.preventDefault();
+    if (sftpInternalDragRef.current) {
+      e.dataTransfer.dropEffect = 'none';
+      setSftpUploadDropOver(false);
+      return;
+    }
     e.dataTransfer.dropEffect = 'copy';
     setSftpUploadDropOver(true);
-    setSftpDownloadDropOver(false);
   };
 
   const onDragLeave = () => {
     setSftpUploadDropOver(false);
-    setSftpDownloadDropOver(false);
   };
 
   const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setSftpUploadDropOver(false);
-    setSftpDownloadDropOver(false);
     if (!activeSessionId) return;
+    const nativeDragToken = sftpInternalDragRef.current;
+    if (nativeDragToken) {
+      const cancelled = await window.terminalApi.sftpCancelNativeDrag(nativeDragToken);
+      if (cancelled && sftpInternalDragRef.current === nativeDragToken) {
+        sftpInternalDragRef.current = null;
+      }
+      return;
+    }
     const localPaths = getLocalPathsFromDrop(e);
-    const sftpPaths = getSftpPathsFromDrag(e);
-    const fromInternalSftp = sftpInternalDragRef.current;
-    sftpInternalDragRef.current = false;
-    if (fromInternalSftp && sftpPaths.length === 0) return;
-    if (localPaths.length === 0 && sftpPaths.length === 0) {
+    if (localPaths.length === 0) {
       await showAlert('未识别到可用的拖拽路径，请重试或使用上传按钮。', 'SFTP');
       return;
     }
-    if (sftpPaths.length > 0) {
-      clearSftpSelectionNow();
-      await window.terminalApi.sftpDownloadBatch({ sessionId: activeSessionId, remotePaths: sftpPaths });
-      return;
-    }
-    if (fromInternalSftp) return;
-    if (localPaths.length > 0) {
-      clearSftpSelectionNow();
-      await window.terminalApi.sftpUploadBatch({ sessionId: activeSessionId, remoteDir: sftpPath, localPaths });
-      await refreshSftp();
-    }
+    clearSftpSelectionNow();
+    await window.terminalApi.sftpUploadBatch({ sessionId: activeSessionId, remoteDir: sftpPath, localPaths });
+    await refreshSftp();
   };
 
   const onToggleShowHidden = async () => {
@@ -166,16 +173,37 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
 
   const onPathBlur = () => setSftpPathInput(sftpPath);
 
-  const onStartItemDrag = (e: React.DragEvent<HTMLDivElement>, fullPath: string) => {
-    sftpInternalDragRef.current = true;
+  const onStartItemDrag = (e: React.DragEvent<HTMLDivElement>, fullPath: string, draggedItem: SftpItem) => {
+    if (!activeSessionId) {
+      e.preventDefault();
+      return;
+    }
+    const previousToken = sftpInternalDragRef.current;
+    if (previousToken) void window.terminalApi.sftpCancelNativeDrag(previousToken);
     const picked = selectedSftpPaths.includes(fullPath) && selectedSftpPaths.length > 0 ? selectedSftpPaths : [fullPath];
-    e.dataTransfer.setData('application/x-sftp-paths', JSON.stringify(picked));
-    e.dataTransfer.effectAllowed = 'copy';
+    const token = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    sftpInternalDragRef.current = token;
+    e.preventDefault();
+    const itemByPath = new Map(
+      sftpItems.map((item) => [`${sftpPath.replace(/\/$/, '')}/${item.name}`, item]),
+    );
+    itemByPath.set(fullPath, draggedItem);
+    window.terminalApi.sftpStartNativeDrag({
+      sessionId: activeSessionId,
+      token,
+      items: picked.map((remotePath) => {
+        const item = itemByPath.get(remotePath);
+        return {
+          remotePath,
+          name: item?.name || remotePath.replace(/\/+$/, '').split('/').pop() || 'download',
+          isDirectory: item?.type === 'd',
+          size: Math.max(0, Number(item?.size || 0)),
+        };
+      }),
+    });
   };
 
-  const onEndItemDrag = () => {
-    sftpInternalDragRef.current = false;
-  };
+  const onEndItemDrag = () => undefined;
 
   const onOpenItemMenu = (e: React.MouseEvent, payload: { path: string; name: string; isDir: boolean }) => {
     if (!activeSession || !activeSessionId) return;

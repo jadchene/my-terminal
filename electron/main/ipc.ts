@@ -14,14 +14,16 @@ import { applySingleInstancePreference } from './singleInstance';
 import { sshStateMap, sftpBatchControlMap, connectionSessionMap, lastKnownCwdMap, sharedState } from './state';
 import { runSftpUploadBatch, runSftpDownloadBatch, ensureUniqueLocalPath, getDefaultDownloadDir, resolveRemotePath, getOrCreateSftp } from './sftp';
 import { setSessionPasswordToKeytar, deleteSessionPasswordFromKeytar, toPublicSession, loadSession, getSessionForConnection, requireConnected, cleanupConnectionState } from './session';
-import { getShellPwd, processShellDataForPwdCapture, updateCwdFromPrompt } from './ssh';
+import { getRemoteShellCwd, updateCwdFromPrompt } from './ssh';
 import { safeSend } from './window';
 import { switchToEnglishInputMethod } from './inputMethod';
+import { registerNativeFileDragIpc } from './nativeFileDrag';
 
 const SSH_DATA_FLUSH_DELAY_MS = 4;
 const MAX_SSH_DATA_IPC_CHUNK = 64 * 1024;
 
 export function registerIpc() {
+  registerNativeFileDragIpc();
   const sshDataBufferMap = new Map<number, string>();
   const sshDataTimerMap = new Map<number, ReturnType<typeof setTimeout>>();
   const flushSshData = (connectionId: number, flushAll = false) => {
@@ -276,7 +278,6 @@ export function registerIpc() {
             sshStateMap.set(connectionId, { client, shell: stream });
             stream.on('data', (data: Buffer) => {
               const text = data.toString('utf8');
-              processShellDataForPwdCapture(connectionId, text);
               updateCwdFromPrompt(connectionId, text);
               enqueueSshData(connectionId, text);
             });
@@ -348,33 +349,15 @@ export function registerIpc() {
   });
   ipcMain.handle('ssh:get-cwd', async (_, sessionId: number) => {
     const state = sshStateMap.get(sessionId);
-    if (!state) return '/';
+    if (!state) return '';
     const cached = lastKnownCwdMap.get(sessionId);
-    try {
-      const live = await getShellPwd(sessionId);
-      const resolvedLive = live.trim();
-      if (resolvedLive) return resolvedLive;
-    } catch {
-      // Fall through to cached/exec fallback.
+    const live = await getRemoteShellCwd(state.client);
+    if (live) {
+      lastKnownCwdMap.set(sessionId, live);
+      return live;
     }
     if (cached && cached.trim()) return cached.trim();
-    return new Promise<string>((resolve) => {
-      state.client.exec('pwd', (err, stream) => {
-        if (err) {
-          resolve('/');
-          return;
-        }
-        let output = '';
-        stream.on('data', (chunk: Buffer) => {
-          output += chunk.toString('utf8');
-        });
-        stream.on('close', () => {
-          const resolved = output.trim() || '/';
-          lastKnownCwdMap.set(sessionId, resolved);
-          resolve(resolved);
-        });
-      });
-    });
+    return '';
   });
 
   ipcMain.handle('sftp:list', async (_, payload: { sessionId: number; path: string; showHidden: boolean }) => {

@@ -41,7 +41,7 @@ type SftpPanelProps = {
   onPathInputChange: (value: string) => void;
   onPathSubmit: () => Promise<void>;
   onPathBlur: () => void;
-  onStartItemDrag: (e: React.DragEvent<HTMLDivElement>, fullPath: string) => void;
+  onStartItemDrag: (e: React.DragEvent<HTMLDivElement>, fullPath: string, item: SftpItem) => void;
   onEndItemDrag: () => void;
   onOpenItemMenu: (e: React.MouseEvent, payload: { path: string; name: string; isDir: boolean }) => void;
   onToggleItemSelect: (fullPath: string, checked: boolean, range?: boolean) => void;
@@ -147,7 +147,7 @@ export function SftpPanel(props: SftpPanelProps) {
                   className="sftp-row"
                   draggable
                   title={formatSftpMeta(item)}
-                  onDragStart={(e) => onStartItemDrag(e, fullPath)}
+                  onDragStart={(e) => onStartItemDrag(e, fullPath, item)}
                   onDragEnd={onEndItemDrag}
                   onContextMenu={(e) => onOpenItemMenu(e, { path: fullPath, name: item.name, isDir })}
                 >

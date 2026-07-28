@@ -183,6 +183,13 @@ declare global {
       sftpDownload: (payload: { sessionId: number; remotePath: string }) => Promise<boolean>;
       sftpUploadBatch: (payload: { sessionId: number; remoteDir: string; localPaths?: string[] }) => Promise<boolean>;
       sftpDownloadBatch: (payload: { sessionId: number; remotePaths: string[]; localDir?: string }) => Promise<boolean>;
+      sftpStartNativeDrag: (payload: {
+        sessionId: number;
+        token: string;
+        items: Array<{ remotePath: string; name: string; isDirectory: boolean; size: number }>;
+      }) => void;
+      sftpCancelNativeDrag: (token: string) => Promise<boolean>;
+      onSftpNativeDragEnded: (cb: (event: { token: string; error: string }) => void) => () => void;
       sftpCancelBatch: (payload: { sessionId: number; batchId: string }) => Promise<boolean>;
       onSftpProgress: (cb: (event: SftpTransferProgress) => void) => () => void;
       onSftpBatchComplete: (cb: (event: SftpTransferBatchResult) => void) => () => void;

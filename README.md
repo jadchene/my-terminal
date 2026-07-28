@@ -10,7 +10,7 @@ My Terminal is a local desktop SSH client built with Electron, React, TypeScript
 - Multiple terminal tabs, including multiple connections to the same saved session.
 - Session tree with folders and a configurable default session.
 - SFTP browser with create, rename, delete, upload, download, and batch transfer support.
-- Drag-and-drop upload and multi-file or directory transfer workflows.
+- Drag-and-drop upload plus native drag-out download for files and directories.
 - Remote metrics panel for CPU, memory, network, disk, system, and NVIDIA GPU data when available.
 - Persistent settings for theme colors, fonts, terminal behavior, sidebar state, hidden files, and download directory.
 - Local SQLite storage for sessions, folders, and app settings.
@@ -50,7 +50,7 @@ npm run dev
 
 Session records store the connection metadata in SQLite. Remembered passwords are migrated out of SQLite and stored through `keytar`; public session data returned to the renderer does not include the password.
 
-SFTP operations require an active SSH session. Downloads use the configured default download directory when set, otherwise the OS downloads directory. Batch transfers emit progress events and can be cancelled while running.
+SFTP operations require an active SSH session. Drag remote files or directories from the SFTP tree into an Explorer folder to download them there. Regular downloads use the configured default download directory when set, otherwise the OS downloads directory. Batch transfers emit progress events and can be cancelled while running.
 
 ## Remote Metrics
 

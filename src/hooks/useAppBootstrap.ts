@@ -38,7 +38,6 @@ type UseAppBootstrapParams = {
   updateTransferRow: (payload: SftpTransferProgress) => void;
   markTransferBatchComplete: (payload: SftpTransferBatchResult) => Promise<void> | void;
   markTransferError: (payload: SftpTransferError) => void;
-  stripInternalProbeOutput: (data: string) => string;
 };
 
 export function useAppBootstrap(params: UseAppBootstrapParams) {
@@ -63,7 +62,6 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     updateTransferRow,
     markTransferBatchComplete,
     markTransferError,
-    stripInternalProbeOutput,
   } = params;
 
   const loadSessionData = useCallback(async () => {
@@ -116,7 +114,7 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     const unMaximize = window.terminalApi.onMaximizedChanged((v) => setIsMaximized(v));
     const unData = window.terminalApi.onSshData(({ sessionId, data }) => {
       const handlers = handlerRef.current;
-      const cleanData = stripInternalProbeOutput(data);
+      const cleanData = data;
       if (!cleanData) return;
       if (
         activeSessionIdRef.current === sessionId &&
@@ -184,7 +182,6 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     setMetrics,
     setMetricsBySession,
     setSettings,
-    stripInternalProbeOutput,
     terminalMapRef,
   ]);
 

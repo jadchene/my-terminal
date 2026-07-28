@@ -8,13 +8,13 @@ import sqlite3 from 'sqlite3';
 import keytar from 'keytar';
 import { userDataPath } from './main/env';
 import { db, all, initStorage } from './main/db';
-import { sshStateMap, sftpMap, sftpBatchControlMap, connectionSessionMap, connectionHomeMap, pendingCwdProbeMap, pendingPwdCaptureMap, lastKnownCwdMap, remoteMetricsSnapshotMap, remoteMetricsPayloadMap, sharedState } from './main/state';
+import { sshStateMap, sftpMap, sftpBatchControlMap, connectionSessionMap, connectionHomeMap, cwdOutputTailMap, lastKnownCwdMap, remoteMetricsSnapshotMap, remoteMetricsPayloadMap, sharedState } from './main/state';
 import { subscribeMetrics } from './main/metrics';
-import { clearPendingPwdCapture, clearPendingCwdProbe } from './main/ssh';
 import { createWindow } from './main/window';
 import { registerIpc } from './main/ipc';
 import { readSettings } from './main/settings';
 import { applySingleInstancePreference } from './main/singleInstance';
+import { cancelAllNativeFileDrags } from './main/nativeFileDrag';
 
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
@@ -49,22 +49,17 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async () => {
+  cancelAllNativeFileDrags();
   if (sharedState.metricsTimer) clearInterval(sharedState.metricsTimer);
 
   for (const [, state] of sshStateMap) state.client.end();
   sshStateMap.clear();
   connectionSessionMap.clear();
   connectionHomeMap.clear();
+  cwdOutputTailMap.clear();
   lastKnownCwdMap.clear();
   remoteMetricsPayloadMap.clear();
   remoteMetricsSnapshotMap.clear();
-  for (const [connectionId] of pendingCwdProbeMap) {
-    clearPendingCwdProbe(connectionId, new Error('应用即将退出'));
-  }
-  for (const [connectionId] of pendingPwdCaptureMap) {
-    clearPendingPwdCapture(connectionId, new Error('应用即将退出'));
-  }
-
   for (const [, sftp] of sftpMap) await sftp.end();
   sftpMap.clear();
   sftpBatchControlMap.clear();

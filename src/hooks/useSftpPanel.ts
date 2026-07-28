@@ -15,7 +15,6 @@ export function useSftpPanel(params: UseSftpPanelParams) {
   const [sftpItems, setSftpItems] = useState<SftpItem[]>([]);
   const [selectedSftpPaths, setSelectedSftpPaths] = useState<string[]>([]);
   const [sftpUploadDropOver, setSftpUploadDropOver] = useState(false);
-  const [sftpDownloadDropOver, setSftpDownloadDropOver] = useState(false);
   const activeSessionIdRef = useRef<number | null>(activeSessionId);
   const showHiddenFilesRef = useRef(showHiddenFiles);
   const sftpPathRef = useRef(sftpPath);
@@ -137,18 +136,6 @@ export function useSftpPanel(params: UseSftpPanelParams) {
     return Array.from(new Set([...fromFiles, ...fromUriList, ...fromPlainText]));
   }, []);
 
-  const getSftpPathsFromDrag = useCallback((event: React.DragEvent): string[] => {
-    const raw = event.dataTransfer.getData('application/x-sftp-paths');
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map((it) => String(it || '')).filter((it) => !!it);
-    } catch {
-      return [];
-    }
-  }, []);
-
   const submitSftpPath = useCallback(async () => {
     if (!activeSessionIdRef.current) return;
     const nextPath = sftpPathInputRef.current.trim();
@@ -173,8 +160,6 @@ export function useSftpPanel(params: UseSftpPanelParams) {
     selectedSftpPaths,
     sftpUploadDropOver,
     setSftpUploadDropOver,
-    sftpDownloadDropOver,
-    setSftpDownloadDropOver,
     refreshSftp,
     setSftpSelection,
     navigateSftp,
@@ -182,7 +167,6 @@ export function useSftpPanel(params: UseSftpPanelParams) {
     clearSftpSelection,
     clearSftpItems,
     getLocalPathsFromDrop,
-    getSftpPathsFromDrag,
     submitSftpPath,
   };
 }

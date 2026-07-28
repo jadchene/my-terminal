@@ -59,6 +59,13 @@ contextBridge.exposeInMainWorld('terminalApi', {
   sftpDownload: (payload) => ipcRenderer.invoke('sftp:download', payload),
   sftpUploadBatch: (payload) => ipcRenderer.invoke('sftp:upload-batch', payload),
   sftpDownloadBatch: (payload) => ipcRenderer.invoke('sftp:download-batch', payload),
+  sftpStartNativeDrag: (payload) => ipcRenderer.send('sftp:start-native-drag', payload),
+  sftpCancelNativeDrag: (token) => ipcRenderer.invoke('sftp:cancel-native-drag', token),
+  onSftpNativeDragEnded: (callback) => {
+    const handler = (_, token) => callback(token);
+    ipcRenderer.on('sftp:native-drag-ended', handler);
+    return () => ipcRenderer.off('sftp:native-drag-ended', handler);
+  },
   sftpCancelBatch: (payload) => ipcRenderer.invoke('sftp:cancel-batch', payload),
   onSftpProgress: (callback) => {
     const handler = (_, data) => callback(data);
