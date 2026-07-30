@@ -10,33 +10,44 @@ import { RemoteMetricsPayload } from './types';
 import { get } from './db';
 import { sshStateMap, remoteMetricsSnapshotMap, remoteMetricsPayloadMap, METRICS_FULL_SAMPLE_INTERVAL_MS, sharedState } from './state';
 import { safeSend } from './window';
+import { CappedMetricsOutput } from './metricsOutput';
+import { parseCpu, parseMem } from './metricsParsers';
+
+export { parseCpu, parseMem } from './metricsParsers';
 
 export function subscribeMetrics() {
   let lastFullSampleAt = 0;
+  let metricsSequence = 0;
+  const emptyPayload = (sessionId: number | null, stale: boolean): RemoteMetricsPayload => ({
+    sessionId,
+    sequence: ++metricsSequence,
+    stale,
+    sampledAt: Date.now(),
+    system: { version: '', arch: '' },
+    cpu: 0,
+    cpuName: '',
+    cpuPhysicalCores: 0,
+    cpuLogicalCores: 0,
+    cpuTemp: null,
+    memory: { usedGb: 0, totalGb: 0, percent: 0 },
+    network: { upload: 0, download: 0, ips: [] },
+    disk: { totalGb: 0, usedGb: 0, percent: 0, upload: 0, download: 0 },
+    gpu: { available: false, items: [] },
+  });
   sharedState.metricsTimer = setInterval(async () => {
     if (!sharedState.mainWindow || sharedState.mainWindow.isDestroyed() || sharedState.metricsCollecting) return;
     sharedState.metricsCollecting = true;
     try {
       if (!sharedState.metricsSessionId || !sshStateMap.has(sharedState.metricsSessionId)) {
         if (!sharedState.metricsInactiveSent) {
-          safeSend('system:metrics', {
-            system: { version: '', arch: '' },
-            cpu: 0,
-            cpuName: '',
-            cpuPhysicalCores: 0,
-            cpuLogicalCores: 0,
-            cpuTemp: null as number | null,
-            memory: { usedGb: 0, totalGb: 0, percent: 0 },
-            network: { upload: 0, download: 0, ips: [] },
-            disk: { totalGb: 0, usedGb: 0, percent: 0, upload: 0, download: 0 },
-            gpu: { available: false, items: [] },
-          });
+          safeSend('system:metrics', emptyPayload(null, false));
           sharedState.metricsInactiveSent = true;
         }
       } else {
         const now = Date.now();
         const forceFullSample = now - lastFullSampleAt >= METRICS_FULL_SAMPLE_INTERVAL_MS;
-        const payload = await collectRemoteMetrics(sharedState.metricsSessionId, forceFullSample);
+        const sessionId = sharedState.metricsSessionId;
+        const payload = await collectRemoteMetrics(sessionId, forceFullSample, ++metricsSequence);
         safeSend('system:metrics', payload);
         if (forceFullSample) {
           lastFullSampleAt = now;
@@ -46,30 +57,18 @@ export function subscribeMetrics() {
     } catch (error) {
       // Keep metrics loop alive even if a probe fails once.
       if (!sharedState.metricsInactiveSent) {
-        safeSend('system:metrics', {
-          system: { version: '', arch: '' },
-          cpu: 0,
-          cpuName: '',
-          cpuPhysicalCores: 0,
-          cpuLogicalCores: 0,
-          memory: { usedGb: 0, totalGb: 0, percent: 0 },
-          network: { upload: 0, download: 0, ips: [] },
-          disk: { totalGb: 0, usedGb: 0, percent: 0, upload: 0, download: 0 },
-          gpu: { available: false, items: [] },
-        });
+        const sessionId = sharedState.metricsSessionId;
+        const cached = sessionId ? remoteMetricsPayloadMap.get(sessionId) : undefined;
+        safeSend(
+          'system:metrics',
+          cached ? { ...cached, sequence: ++metricsSequence, stale: true } : emptyPayload(sessionId, true),
+        );
         sharedState.metricsInactiveSent = true;
       }
     } finally {
       sharedState.metricsCollecting = false;
     }
   }, 1000);
-}
-
-export function parseCpu(line: string): { total: number; idle: number } {
-  const parts = line.trim().split(/\s+/).slice(1).map((x) => Number(x) || 0);
-  const idle = (parts[3] || 0) + (parts[4] || 0);
-  const total = parts.reduce((acc, n) => acc + n, 0);
-  return { total, idle };
 }
 
 export function parseCpuInfo(lines: string[]): {
@@ -137,22 +136,6 @@ export function parseCpuInfo(lines: string[]): {
     logicalCores,
     mhz: Number(mhz.toFixed(0)),
   };
-}
-
-export function parseMem(lines: string[]): { total: number; available: number } {
-  let total = 0;
-  let available = 0;
-  for (const line of lines) {
-    if (line.startsWith('MemTotal:')) {
-      const v = Number(line.replace(/[^0-9]/g, '')) || 0;
-      total = v * 1024;
-    }
-    if (line.startsWith('MemAvailable:')) {
-      const v = Number(line.replace(/[^0-9]/g, '')) || 0;
-      available = v * 1024;
-    }
-  }
-  return { total, available };
 }
 
 export function parseNet(lines: string[]): { rx: number; tx: number } {
@@ -371,37 +354,60 @@ export function parseIps(lines: string[]): string[] {
   return unique.length > 0 ? [unique[0]] : [];
 }
 
-export function execOnSession(sessionId: number, command: string): Promise<string> {
+export function execOnSession(
+  sessionId: number,
+  command: string,
+  options: { timeoutMs?: number; maxOutputBytes?: number } = {},
+): Promise<string> {
   const state = sshStateMap.get(sessionId);
   if (!state) {
     return Promise.reject(new Error('SSH 未连接'));
   }
   return new Promise((resolve, reject) => {
+    const timeoutMs = options.timeoutMs ?? 5000;
+    const maxOutputBytes = options.maxOutputBytes ?? 256 * 1024;
+    let settled = false;
+    let channel: { close?: () => void } | null = null;
+    const finish = (error?: Error, output = '') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(output);
+    };
+    const timer = setTimeout(() => {
+      channel?.close?.();
+      finish(new Error(`远程指标采集超时（${timeoutMs}ms）`));
+    }, timeoutMs);
     state.client.exec(command, (err, stream) => {
       if (err) {
-        reject(err);
+        finish(err);
         return;
       }
-      let stdout = '';
-      let stderr = '';
+      channel = stream;
+      const output = new CappedMetricsOutput(maxOutputBytes);
       stream.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString('utf8');
-      });
-      stream.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf8');
-      });
-      stream.on('close', () => {
-        if (stderr.trim()) {
-          resolve(stdout);
-          return;
+        if (settled) return;
+        try {
+          output.append(chunk);
+        } catch (error) {
+          stream.close();
+          finish(error instanceof Error ? error : new Error(String(error)));
         }
-        resolve(stdout);
+      });
+      stream.stderr.on('data', () => undefined);
+      stream.on('close', () => {
+        finish(undefined, output.toString());
       });
     });
   });
 }
 
-export async function collectRemoteMetrics(sessionId: number, includeStaticSample = false): Promise<RemoteMetricsPayload> {
+export async function collectRemoteMetrics(
+  sessionId: number,
+  includeStaticSample = false,
+  sequence = 0,
+): Promise<RemoteMetricsPayload> {
   const cachedPayload = remoteMetricsPayloadMap.get(sessionId);
   const shouldSampleStatic = includeStaticSample || !cachedPayload;
   const script = shouldSampleStatic
@@ -426,7 +432,10 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
         'echo "__DISK__"; (cat /proc/diskstats 2>/dev/null || true)',
       ].join('; ');
 
-  const output = await execOnSession(sessionId, script);
+  const output = await execOnSession(sessionId, script, {
+    timeoutMs: 5000,
+    maxOutputBytes: shouldSampleStatic ? 1024 * 1024 : 256 * 1024,
+  });
   const lines = output.split(/\r?\n/);
   const section: Record<string, string[]> = {
     CPU: [],
@@ -534,6 +543,10 @@ export async function collectRemoteMetrics(sessionId: number, includeStaticSampl
     : (cachedPayload?.gpu || { available: false, items: [] });
 
   const payload: RemoteMetricsPayload = {
+    sessionId,
+    sequence,
+    stale: false,
+    sampledAt: now,
     system,
     cpu,
     cpuName,

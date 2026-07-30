@@ -1,5 +1,5 @@
 import { memo, useRef, type MutableRefObject } from 'react';
-import type { Terminal } from 'xterm';
+import type { Terminal } from '@xterm/xterm';
 import type { Settings } from '../types';
 import { hasMultilineInput, prepareTerminalPaste } from '../utils/terminalInput';
 import { getTerminalSelectionText } from '../utils/terminalSelection';
@@ -12,6 +12,7 @@ type TerminalZoneProps = {
   terminalMapRef: MutableRefObject<Map<number, Terminal>>;
   syncPauseStateWithViewport: (sessionId: number, term?: Terminal) => void;
   askConfirm: (message: string, title?: string) => Promise<boolean>;
+  showAlert: (message: string, title?: string) => Promise<void>;
 };
 
 function TerminalZoneInner(props: TerminalZoneProps) {
@@ -23,6 +24,7 @@ function TerminalZoneInner(props: TerminalZoneProps) {
     terminalMapRef,
     syncPauseStateWithViewport,
     askConfirm,
+    showAlert,
   } = props;
   const pauseSyncFrameRef = useRef<number | null>(null);
 
@@ -47,11 +49,15 @@ function TerminalZoneInner(props: TerminalZoneProps) {
     if (settings.behavior.multilineWarning && hasMultilineInput(text)) {
       if (!(await askConfirm('检测到多行内容，确认粘贴到终端吗？'))) return;
     }
-    await window.terminalApi.sshSend({
-      sessionId: activeSessionId,
-      input: prepareTerminalPaste(text, !!term?.modes.bracketedPasteMode),
-    });
-    term?.focus();
+    try {
+      await window.terminalApi.sshSend({
+        sessionId: activeSessionId,
+        input: prepareTerminalPaste(text, !!term?.modes.bracketedPasteMode),
+      });
+      term?.focus();
+    } catch (error) {
+      await showAlert(error instanceof Error ? error.message : String(error), '粘贴失败');
+    }
   };
 
   return (
@@ -84,7 +90,13 @@ function TerminalZoneInner(props: TerminalZoneProps) {
         onContextMenu={async (event) => {
           event.preventDefault();
           if (!activeSessionId || !settings.behavior.rightClickPaste) return;
-          const text = await navigator.clipboard.readText();
+          let text = '';
+          try {
+            text = await navigator.clipboard.readText();
+          } catch (error) {
+            await showAlert(error instanceof Error ? error.message : String(error), '读取剪贴板失败');
+            return;
+          }
           await pasteClipboardText(text);
         }}
       />

@@ -68,6 +68,7 @@ export type SftpBatchControl = {
   connectionId: number;
   cancelled: boolean;
   client?: any;
+  clients?: any[];
   ownsClient?: boolean;
 };
 
@@ -88,6 +89,10 @@ export type RemoteMetricsSnapshot = {
 };
 
 export type RemoteMetricsPayload = {
+  sessionId: number | null;
+  sequence: number;
+  stale: boolean;
+  sampledAt: number;
   system: { version: string; arch: string };
   cpu: number;
   cpuName: string;

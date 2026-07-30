@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,8 +7,10 @@ import SftpClient from 'ssh2-sftp-client';
 import sqlite3 from 'sqlite3';
 import keytar from 'keytar';
 import { WindowState } from './types';
-import { isDev, appRoot, windowStatePath, preloadCandidates, preloadPath } from './env';
+import { appRoot, windowStatePath, preloadCandidates, preloadPath, rendererDevUrl } from './env';
 import { sharedState } from './state';
+
+let persistWindowStateTimer: NodeJS.Timeout | null = null;
 
 export function readWindowState(): WindowState | null {
   try {
@@ -47,6 +49,20 @@ export function persistWindowState(target: BrowserWindow | null) {
   }
 }
 
+export function schedulePersistWindowState(target: BrowserWindow | null) {
+  if (persistWindowStateTimer) clearTimeout(persistWindowStateTimer);
+  persistWindowStateTimer = setTimeout(() => {
+    persistWindowStateTimer = null;
+    persistWindowState(target);
+  }, 200);
+}
+
+export function flushWindowState(target: BrowserWindow | null) {
+  if (persistWindowStateTimer) clearTimeout(persistWindowStateTimer);
+  persistWindowStateTimer = null;
+  persistWindowState(target);
+}
+
 export function safeSend(channel: string, payload?: unknown) {
   if (!sharedState.mainWindow || sharedState.mainWindow.isDestroyed()) return;
   const wc = sharedState.mainWindow.webContents;
@@ -71,24 +87,46 @@ export function createWindow() {
     throw new Error(`preload.js not found. tried: ${preloadCandidates.join(' | ')}`);
   }
   const savedState = readWindowState();
+  const hasVisibleSavedPosition = savedState?.x !== undefined && savedState.y !== undefined
+    && screen.getAllDisplays().some(({ workArea }) => {
+      const visibleWidth = Math.min(savedState.x! + savedState.width, workArea.x + workArea.width)
+        - Math.max(savedState.x!, workArea.x);
+      const visibleHeight = Math.min(savedState.y! + savedState.height, workArea.y + workArea.height)
+        - Math.max(savedState.y!, workArea.y);
+      return visibleWidth >= 100 && visibleHeight >= 100;
+    });
   sharedState.mainWindow = new BrowserWindow({
     width: savedState?.width || 1400,
     height: savedState?.height || 900,
-    x: savedState?.x,
-    y: savedState?.y,
+    x: hasVisibleSavedPosition ? savedState?.x : undefined,
+    y: hasVisibleSavedPosition ? savedState?.y : undefined,
     frame: false,
     backgroundColor: '#000000',
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
-  if (isDev) {
-    sharedState.mainWindow.loadURL('http://localhost:5173');
+  const csp = rendererDevUrl
+    ? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://localhost:5173 ws://localhost:5173; object-src 'none'; base-uri 'none'; frame-src 'none'"
+    : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'";
+  sharedState.mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [csp],
+      },
+    });
+  });
+  sharedState.mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault();
+  });
+  if (rendererDevUrl) {
+    void sharedState.mainWindow.loadURL(rendererDevUrl);
   } else {
-    sharedState.mainWindow.loadFile(path.join(appRoot, 'dist', 'index.html'));
+    void sharedState.mainWindow.loadFile(path.join(appRoot, 'dist', 'index.html'));
   }
   sharedState.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -105,20 +143,20 @@ export function createWindow() {
     console.error('Renderer load failed:', { code, desc, url });
   });
   sharedState.mainWindow.on('maximize', () => {
-    persistWindowState(sharedState.mainWindow);
+    flushWindowState(sharedState.mainWindow);
     safeSend('window:maximized-changed', true);
   });
   sharedState.mainWindow.on('unmaximize', () => {
-    persistWindowState(sharedState.mainWindow);
+    flushWindowState(sharedState.mainWindow);
     safeSend('window:maximized-changed', false);
   });
-  sharedState.mainWindow.on('resize', () => persistWindowState(sharedState.mainWindow));
-  sharedState.mainWindow.on('move', () => persistWindowState(sharedState.mainWindow));
+  sharedState.mainWindow.on('resize', () => schedulePersistWindowState(sharedState.mainWindow));
+  sharedState.mainWindow.on('move', () => schedulePersistWindowState(sharedState.mainWindow));
   if (savedState?.maximized) {
     sharedState.mainWindow.maximize();
   }
+  sharedState.mainWindow.on('close', () => flushWindowState(sharedState.mainWindow));
   sharedState.mainWindow.on('closed', () => {
-    persistWindowState(sharedState.mainWindow);
     sharedState.mainWindow = null;
   });
   Menu.setApplicationMenu(null);

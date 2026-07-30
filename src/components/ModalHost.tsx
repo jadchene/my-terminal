@@ -50,10 +50,12 @@ type ModalHostProps = {
   dialogInput: string;
   showDialogPassword: boolean;
   capsLockOn: boolean;
+  dialogRemember: boolean;
   setDialogInput: Dispatch<SetStateAction<string>>;
   setShowDialogPassword: Dispatch<SetStateAction<boolean>>;
   setCapsLockOn: Dispatch<SetStateAction<boolean>>;
-  closeDialog: (value: boolean | string | null | void) => void;
+  setDialogRemember: Dispatch<SetStateAction<boolean>>;
+  closeDialog: (value: boolean | string | { value: string; remember: boolean } | null | void) => void;
 
   sessionTreeActions: {
     onToggleSessionPassword: () => void;
@@ -116,9 +118,11 @@ export function ModalHost(props: ModalHostProps) {
     dialogInput,
     showDialogPassword,
     capsLockOn,
+    dialogRemember,
     setDialogInput,
     setShowDialogPassword,
     setCapsLockOn,
+    setDialogRemember,
     closeDialog,
     sessionTreeActions,
     settingsActions,
@@ -194,9 +198,11 @@ export function ModalHost(props: ModalHostProps) {
         dialogInput={dialogInput}
         showDialogPassword={showDialogPassword}
         capsLockOn={capsLockOn}
+        dialogRemember={dialogRemember}
         onChangeInput={setDialogInput}
         onSetShowDialogPassword={setShowDialogPassword}
         onSetCapsLockOn={setCapsLockOn}
+        onSetDialogRemember={setDialogRemember}
         onClose={closeDialog}
       />
     </>

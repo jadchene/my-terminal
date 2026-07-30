@@ -8,4 +8,26 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'react-vendor',
+              test: /node_modules[\\/](?:react|react-dom)[\\/]/,
+            },
+            {
+              name: 'terminal-vendor',
+              test: /node_modules[\\/]@xterm[\\/]/,
+            },
+            {
+              name: 'icons-vendor',
+              test: /node_modules[\\/]lucide-react[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
 });

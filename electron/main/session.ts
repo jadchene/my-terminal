@@ -64,18 +64,21 @@ export function requireConnected(connectionId: number) {
   }
 }
 
-export async function cleanupConnectionState(connectionId: number) {
-  const batchClientsToClose: any[] = [];
+export async function cleanupConnectionState(connectionId: number, expectedClient?: Client) {
+  if (expectedClient && sshStateMap.get(connectionId)?.client !== expectedClient) return false;
+  const batchClientsToClose = new Set<any>();
   for (const [, control] of sftpBatchControlMap) {
     if (control.connectionId === connectionId) {
       control.cancelled = true;
       if (control.client && control.ownsClient) {
-        batchClientsToClose.push(control.client);
+        batchClientsToClose.add(control.client);
         control.client = undefined;
       }
+      for (const client of control.clients || []) batchClientsToClose.add(client);
+      control.clients = [];
     }
   }
-  await Promise.all(batchClientsToClose.map(async (it) => it.end().catch(() => null)));
+  await Promise.all(Array.from(batchClientsToClose, async (it) => it.end().catch(() => null)));
   const sshState = sshStateMap.get(connectionId);
   if (sshState) {
     try {
@@ -103,4 +106,5 @@ export async function cleanupConnectionState(connectionId: number) {
     }
     sftpMap.delete(connectionId);
   }
+  return true;
 }

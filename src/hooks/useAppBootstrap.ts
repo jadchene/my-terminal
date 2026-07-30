@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type {
   Folder,
   Metrics,
@@ -28,12 +28,12 @@ type UseAppBootstrapParams = {
   setMetricsBySession: Dispatch<SetStateAction<Record<number, Metrics>>>;
   disconnectedByTabRef: MutableRefObject<Map<number, boolean>>;
   reconnectingTabRef: MutableRefObject<Set<number>>;
-  terminalMapRef: MutableRefObject<Map<number, import('xterm').Terminal>>;
+  terminalMapRef: MutableRefObject<Map<number, import('@xterm/xterm').Terminal>>;
   appendPendingOutput: (sessionId: number, data: string) => void;
-  writeTerminalOutput: (sessionId: number, data: string, term?: import('xterm').Terminal) => void;
+  writeTerminalOutput: (sessionId: number, data: string, term?: import('@xterm/xterm').Terminal) => void;
   getPausedByScroll: (sessionId: number) => boolean;
-  isAtBottom: (term: import('xterm').Terminal) => boolean;
-  setPausedByScroll: (sessionId: number, paused: boolean, term?: import('xterm').Terminal) => void;
+  isAtBottom: (term: import('@xterm/xterm').Terminal) => boolean;
+  setPausedByScroll: (sessionId: number, paused: boolean, term?: import('@xterm/xterm').Terminal) => void;
   fitTerminalStabilized: (sessionId: number) => void;
   updateTransferRow: (payload: SftpTransferProgress) => void;
   markTransferBatchComplete: (payload: SftpTransferBatchResult) => Promise<void> | void;
@@ -41,6 +41,9 @@ type UseAppBootstrapParams = {
 };
 
 export function useAppBootstrap(params: UseAppBootstrapParams) {
+  const metricsSequenceRef = useRef<Map<number | null, number>>(new Map());
+  const bootstrapSequenceRef = useRef(0);
+  const [bootstrapError, setBootstrapError] = useState('');
   const {
     activeSessionIdRef,
     setSettings,
@@ -151,9 +154,12 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
       term?.writeln('\r\n[连接已关闭，按 R 重连]');
     });
     const unMetrics = window.terminalApi.onMetrics((payload) => {
+      const previousSequence = metricsSequenceRef.current.get(payload.sessionId) ?? -1;
+      if (payload.sequence <= previousSequence) return;
+      metricsSequenceRef.current.set(payload.sessionId, payload.sequence);
       setMetrics(payload);
-      if (activeSessionIdRef.current) {
-        setMetricsBySession((prev) => ({ ...prev, [activeSessionIdRef.current as number]: payload }));
+      if (payload.sessionId != null) {
+        setMetricsBySession((prev) => ({ ...prev, [payload.sessionId as number]: payload }));
       }
     });
     const unSftpProgress = window.terminalApi.onSftpProgress((event) => handlerRef.current.updateTransferRow(event));
@@ -185,17 +191,31 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     terminalMapRef,
   ]);
 
-  useEffect(() => {
-    void (async () => {
-      const [initSettings, runtime] = await Promise.all([
+  const initializeApp = useCallback(async () => {
+    const sequence = ++bootstrapSequenceRef.current;
+    setBootstrapError('');
+    try {
+      const [initSettings, runtime, folderResult, sessionResult] = await Promise.all([
         window.terminalApi.getSettings(),
         window.terminalApi.getRuntimePaths(),
+        window.terminalApi.listFolders(),
+        window.terminalApi.listSessions(),
       ]);
+      if (sequence !== bootstrapSequenceRef.current) return;
       setSettings(initSettings);
       setRuntimeInfo(runtime);
-      await loadSessionData();
-    })();
-  }, [loadSessionData, setRuntimeInfo, setSettings]);
+      setFolders(folderResult);
+      setSessions(sessionResult);
+    } catch (error) {
+      if (sequence !== bootstrapSequenceRef.current) return;
+      setSettings(null);
+      setBootstrapError(error instanceof Error ? error.message : String(error || '应用初始化失败'));
+    }
+  }, [setFolders, setRuntimeInfo, setSessions, setSettings]);
+
+  useEffect(() => {
+    void initializeApp();
+  }, [initializeApp]);
 
   useEffect(() => {
     window.terminalApi.isMaximizedWindow().then((v) => setIsMaximized(v)).catch(() => null);
@@ -203,5 +223,7 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
 
   return {
     loadSessionData,
+    bootstrapError,
+    retryBootstrap: initializeApp,
   };
 }

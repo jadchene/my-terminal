@@ -1,14 +1,19 @@
-import { useCallback, useRef, useState } from 'react';
-import { Terminal } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
-import { WebLinksAddon } from 'xterm-addon-web-links';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import type { MutableRefObject } from 'react';
 import type { Settings } from '../types';
 import { normalizeTerminalDataInput } from '../utils/terminalInput';
 import { getTerminalSelectionText } from '../utils/terminalSelection';
+import { appendBoundedUtf8, materializeBoundedUtf8, type BoundedText } from '../utils/boundedText';
+import { disposeTerminalResources } from '../utils/terminalResourceCleanup';
+import { mountTerminal } from '../utils/terminalMount';
 
 const MAX_TERMINAL_WRITE_CHUNK = 64 * 1024;
 const IMMEDIATE_TERMINAL_WRITE_CHUNK = 2 * 1024;
+const MAX_PAUSED_OUTPUT_BYTES = 8 * 1024 * 1024;
+const TRUNCATED_OUTPUT_NOTICE = '\r\n\x1b[33m[暂停期间输出超过 8 MiB，已丢弃最旧内容]\x1b[0m\r\n';
 
 function canWriteImmediately(data: string): boolean {
   return data.length <= IMMEDIATE_TERMINAL_WRITE_CHUNK && !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(data);
@@ -29,7 +34,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const fitFrameRef = useRef<Map<number, number>>(new Map());
   const stabilizedFitTimerRef = useRef<Map<number, ReturnType<typeof setTimeout>[]>>(new Map());
   const pausedByScrollRef = useRef<Map<number, boolean>>(new Map());
-  const pendingOutputRef = useRef<Map<number, string>>(new Map());
+  const pendingOutputRef = useRef<Map<number, BoundedText>>(new Map());
   const pendingWriteRef = useRef<Map<number, string>>(new Map());
   const pendingWriteFrameRef = useRef<Map<number, number>>(new Map());
   const pauseSyncFrameRef = useRef<Map<number, number>>(new Map());
@@ -100,8 +105,8 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
   const isAtBottom = useCallback((term: Terminal): boolean => term.buffer.active.viewportY >= term.buffer.active.baseY, []);
 
   const appendPendingOutput = useCallback((sessionId: number, data: string) => {
-    const old = pendingOutputRef.current.get(sessionId) || '';
-    pendingOutputRef.current.set(sessionId, old + data);
+    const old = pendingOutputRef.current.get(sessionId);
+    pendingOutputRef.current.set(sessionId, appendBoundedUtf8(old, data, MAX_PAUSED_OUTPUT_BYTES));
   }, []);
 
   const writeTerminalOutput = useCallback((sessionId: number, data: string, term?: Terminal) => {
@@ -141,10 +146,37 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     const target = term ?? terminalMapRef.current.get(sessionId);
     if (!target) return;
     const pending = pendingOutputRef.current.get(sessionId);
-    if (!pending) return;
+    if (!pending || pending.byteLength === 0) return;
     pendingOutputRef.current.delete(sessionId);
-    writeTerminalOutput(sessionId, pending, target);
+    writeTerminalOutput(
+      sessionId,
+      `${pending.truncated ? TRUNCATED_OUTPUT_NOTICE : ''}${materializeBoundedUtf8(pending)}`,
+      target,
+    );
   }, [writeTerminalOutput]);
+
+  const disposeTerminal = useCallback((sessionId: number) => {
+    disposeTerminalResources(sessionId, {
+      terminal: terminalMapRef.current,
+      fit: fitMapRef.current,
+      fitFrame: fitFrameRef.current,
+      writeFrame: pendingWriteFrameRef.current,
+      pauseFrame: pauseSyncFrameRef.current,
+      stabilizedTimers: stabilizedFitTimerRef.current,
+      inputTimer: pendingInputTimerRef.current,
+      selectionTimer: selectionCopyTimerRef.current,
+      pendingOutput: pendingOutputRef.current,
+      pendingWrite: pendingWriteRef.current,
+      pendingInput: pendingInputRef.current,
+      pausedByScroll: pausedByScrollRef.current,
+      autoCopySelection: autoCopySelectionRef.current,
+      disconnected: disconnectedByTabRef.current,
+    });
+  }, [disconnectedByTabRef]);
+
+  useEffect(() => () => {
+    for (const sessionId of Array.from(terminalMapRef.current.keys())) disposeTerminal(sessionId);
+  }, [disposeTerminal]);
 
   const setPausedByScroll = useCallback((sessionId: number, paused: boolean, term?: Terminal) => {
       pausedByScrollRef.current.set(sessionId, paused);
@@ -302,8 +334,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
       foreground: localSettings.theme.foregroundColor,
     };
 
-    terminalContainerRef.current.innerHTML = '';
-    term.open(terminalContainerRef.current);
+    mountTerminal(terminalContainerRef.current, term);
     fitTerminalStabilized(sessionId);
     focusTerminalInput(sessionId, !!localSettings.behavior.autoSwitchEnglishInputMethod);
     const paused = !isAtBottom(term);
@@ -334,6 +365,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     focusTerminalInput,
     getPausedByScroll,
     attachTerminal,
+    disposeTerminal,
     setReconnectHandler,
     isAtBottom,
   };

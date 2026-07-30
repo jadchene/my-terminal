@@ -1,6 +1,13 @@
 import { flushSync } from 'react-dom';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { SftpItem } from '../types';
+import { formatSftpError, isSilentSftpError } from '../utils/sftpError';
+import { isLatestSessionRequest } from '../utils/requestSequence';
+import {
+  createSessionSftpState,
+  updateSessionSftpState,
+  type SessionSftpState,
+} from '../utils/sessionSftpState';
 
 type UseSftpPanelParams = {
   activeSessionId: number | null;
@@ -10,16 +17,49 @@ type UseSftpPanelParams = {
 
 export function useSftpPanel(params: UseSftpPanelParams) {
   const { activeSessionId, showHiddenFiles, showAlert } = params;
-  const [sftpPath, setSftpPath] = useState('~');
-  const [sftpPathInput, setSftpPathInput] = useState('~');
-  const [sftpItems, setSftpItems] = useState<SftpItem[]>([]);
-  const [selectedSftpPaths, setSelectedSftpPaths] = useState<string[]>([]);
+  const [sessionStateById, setSessionStateById] = useState<Map<number, SessionSftpState>>(() => new Map());
   const [sftpUploadDropOver, setSftpUploadDropOver] = useState(false);
+  const sessionStateByIdRef = useRef(sessionStateById);
   const activeSessionIdRef = useRef<number | null>(activeSessionId);
   const showHiddenFilesRef = useRef(showHiddenFiles);
-  const sftpPathRef = useRef(sftpPath);
-  const sftpPathInputRef = useRef(sftpPathInput);
-  const sftpSelectionAnchorRef = useRef<string | null>(null);
+  const sftpSelectionAnchorRef = useRef<Map<number, string | null>>(new Map());
+  const listRequestSequenceRef = useRef<Map<number, number>>(new Map());
+  const activeState = activeSessionId == null
+    ? createSessionSftpState()
+    : sessionStateById.get(activeSessionId) ?? createSessionSftpState();
+  const {
+    path: sftpPath,
+    pathInput: sftpPathInput,
+    items: sftpItems,
+    selectedPaths: selectedSftpPaths,
+  } = activeState;
+
+  const updateSessionState = useCallback((
+    sessionId: number,
+    updater: (current: SessionSftpState) => SessionSftpState,
+  ) => {
+    const next = updateSessionSftpState(sessionStateByIdRef.current, sessionId, updater);
+    sessionStateByIdRef.current = next;
+    setSessionStateById(next);
+  }, []);
+
+  const setSftpPath = useCallback<Dispatch<SetStateAction<string>>>((nextValue) => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    updateSessionState(sessionId, (current) => ({
+      ...current,
+      path: typeof nextValue === 'function' ? nextValue(current.path) : nextValue,
+    }));
+  }, [updateSessionState]);
+
+  const setSftpPathInput = useCallback<Dispatch<SetStateAction<string>>>((nextValue) => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    updateSessionState(sessionId, (current) => ({
+      ...current,
+      pathInput: typeof nextValue === 'function' ? nextValue(current.pathInput) : nextValue,
+    }));
+  }, [updateSessionState]);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -29,34 +69,44 @@ export function useSftpPanel(params: UseSftpPanelParams) {
     showHiddenFilesRef.current = showHiddenFiles;
   }, [showHiddenFiles]);
 
-  useEffect(() => {
-    sftpPathRef.current = sftpPath;
-  }, [sftpPath]);
-
-  useEffect(() => {
-    sftpPathInputRef.current = sftpPathInput;
-  }, [sftpPathInput]);
-
-  const refreshSftp = useCallback(async (pathInput?: string) => {
+  const refreshSftp = useCallback(async (pathInput?: string): Promise<boolean> => {
     const sessionId = activeSessionIdRef.current;
-    if (!sessionId) return;
-    const target = pathInput ?? sftpPathRef.current;
-    const list = await window.terminalApi.sftpList({
+    if (!sessionId) return false;
+    const requestSequence = (listRequestSequenceRef.current.get(sessionId) ?? 0) + 1;
+    listRequestSequenceRef.current.set(sessionId, requestSequence);
+    const target = pathInput ?? sessionStateByIdRef.current.get(sessionId)?.path ?? '~';
+    const response = await window.terminalApi.sftpList({
       sessionId,
+      requestSequence,
       path: target,
       showHidden: showHiddenFilesRef.current,
     });
-    setSftpItems(list);
-    setSelectedSftpPaths((prev) => prev.filter((it) => list.some((item) => `${target.replace(/\/$/, '')}/${item.name}` === it)));
-  }, []);
+    if (!isLatestSessionRequest(
+      activeSessionIdRef.current,
+      response.sessionId,
+      listRequestSequenceRef.current.get(sessionId) ?? 0,
+      response.requestSequence,
+    )) return false;
+    const list = response.items;
+    updateSessionState(sessionId, (current) => ({
+      ...current,
+      items: list,
+      selectedPaths: current.selectedPaths.filter((it) => (
+        list.some((item) => `${target.replace(/\/$/, '')}/${item.name}` === it)
+      )),
+    }));
+    return true;
+  }, [updateSessionState]);
 
   const getVisibleSftpPaths = useCallback(() => {
-    const basePath = sftpPathRef.current.replace(/\/$/, '');
+    const basePath = sftpPath.replace(/\/$/, '');
     return sftpItems.map((item) => `${basePath}/${item.name}`);
-  }, [sftpItems]);
+  }, [sftpItems, sftpPath]);
 
   const setSftpSelection = useCallback((fullPath: string, checked: boolean, range = false) => {
-    const anchorPath = sftpSelectionAnchorRef.current;
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    const anchorPath = sftpSelectionAnchorRef.current.get(sessionId) ?? null;
     const visiblePaths = getVisibleSftpPaths();
     if (range && anchorPath) {
       const anchorIndex = visiblePaths.indexOf(anchorPath);
@@ -65,41 +115,63 @@ export function useSftpPanel(params: UseSftpPanelParams) {
         const start = Math.min(anchorIndex, targetIndex);
         const end = Math.max(anchorIndex, targetIndex);
         const rangePaths = visiblePaths.slice(start, end + 1);
-        setSelectedSftpPaths((prev) => {
-          if (checked) return Array.from(new Set([...prev, ...rangePaths]));
-          return prev.filter((it) => !rangePaths.includes(it));
-        });
+        updateSessionState(sessionId, (current) => ({
+          ...current,
+          selectedPaths: checked
+            ? Array.from(new Set([...current.selectedPaths, ...rangePaths]))
+            : current.selectedPaths.filter((it) => !rangePaths.includes(it)),
+        }));
         return;
       }
     }
-    sftpSelectionAnchorRef.current = fullPath;
-    setSelectedSftpPaths((prev) => {
-      if (checked) return prev.includes(fullPath) ? prev : [...prev, fullPath];
-      return prev.filter((it) => it !== fullPath);
-    });
-  }, [getVisibleSftpPaths]);
+    sftpSelectionAnchorRef.current.set(sessionId, fullPath);
+    updateSessionState(sessionId, (current) => ({
+      ...current,
+      selectedPaths: checked
+        ? current.selectedPaths.includes(fullPath)
+          ? current.selectedPaths
+          : [...current.selectedPaths, fullPath]
+        : current.selectedPaths.filter((it) => it !== fullPath),
+    }));
+  }, [getVisibleSftpPaths, updateSessionState]);
 
   const navigateSftp = useCallback(async (nextPath: string) => {
-    sftpPathRef.current = nextPath;
-    setSftpPath(nextPath);
-    await refreshSftp(nextPath);
-  }, [refreshSftp]);
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return false;
+    const accepted = await refreshSftp(nextPath);
+    if (!accepted || activeSessionIdRef.current !== sessionId) return false;
+    updateSessionState(sessionId, (current) => ({ ...current, path: nextPath }));
+    return true;
+  }, [refreshSftp, updateSessionState]);
+
+  const getCurrentSftpLocation = useCallback(() => ({
+    sessionId: activeSessionIdRef.current,
+    path: activeSessionIdRef.current == null
+      ? '~'
+      : sessionStateByIdRef.current.get(activeSessionIdRef.current)?.path ?? '~',
+  }), []);
 
   const clearSftpSelectionNow = useCallback(() => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
     flushSync(() => {
-      setSelectedSftpPaths([]);
-      sftpSelectionAnchorRef.current = null;
+      sftpSelectionAnchorRef.current.set(sessionId, null);
+      updateSessionState(sessionId, (current) => ({ ...current, selectedPaths: [] }));
     });
-  }, []);
+  }, [updateSessionState]);
 
   const clearSftpSelection = useCallback(() => {
-    setSelectedSftpPaths([]);
-    sftpSelectionAnchorRef.current = null;
-  }, []);
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    sftpSelectionAnchorRef.current.set(sessionId, null);
+    updateSessionState(sessionId, (current) => ({ ...current, selectedPaths: [] }));
+  }, [updateSessionState]);
 
   const clearSftpItems = useCallback(() => {
-    setSftpItems([]);
-  }, []);
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    updateSessionState(sessionId, (current) => ({ ...current, items: [] }));
+  }, [updateSessionState]);
 
   const getLocalPathsFromDrop = useCallback((event: React.DragEvent): string[] => {
     const files = Array.from(event.dataTransfer.files || []);
@@ -137,19 +209,34 @@ export function useSftpPanel(params: UseSftpPanelParams) {
   }, []);
 
   const submitSftpPath = useCallback(async () => {
-    if (!activeSessionIdRef.current) return;
-    const nextPath = sftpPathInputRef.current.trim();
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) return;
+    const current = sessionStateByIdRef.current.get(sessionId) ?? createSessionSftpState();
+    const nextPath = current.pathInput.trim();
     if (!nextPath) {
-      setSftpPathInput(sftpPathRef.current);
+      setSftpPathInput(current.path);
       return;
     }
     try {
       await navigateSftp(nextPath);
     } catch (error) {
-      setSftpPathInput(sftpPathRef.current);
-      await showAlert(`路径跳转失败: ${String(error)}`, 'SFTP');
+      setSftpPathInput(sessionStateByIdRef.current.get(sessionId)?.path ?? '~');
+      if (!isSilentSftpError(error)) await showAlert(formatSftpError(error), 'SFTP');
     }
   }, [navigateSftp, showAlert]);
+
+  const hasSftpSessionState = useCallback((sessionId: number) => (
+    sessionStateByIdRef.current.has(sessionId)
+  ), []);
+
+  const clearSftpSessionState = useCallback((sessionId: number) => {
+    const next = new Map(sessionStateByIdRef.current);
+    next.delete(sessionId);
+    sessionStateByIdRef.current = next;
+    listRequestSequenceRef.current.delete(sessionId);
+    sftpSelectionAnchorRef.current.delete(sessionId);
+    setSessionStateById(next);
+  }, []);
 
   return {
     sftpPath,
@@ -163,6 +250,9 @@ export function useSftpPanel(params: UseSftpPanelParams) {
     refreshSftp,
     setSftpSelection,
     navigateSftp,
+    getCurrentSftpLocation,
+    hasSftpSessionState,
+    clearSftpSessionState,
     clearSftpSelectionNow,
     clearSftpSelection,
     clearSftpItems,

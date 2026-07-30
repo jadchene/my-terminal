@@ -34,7 +34,7 @@ export function StatusPanel({ activeSessionId, currentMetrics }: StatusPanelProp
       {activeSessionId && currentMetrics ? (
         <>
           <div className="status-group">
-            <div className="status-title">系统</div>
+            <div className="status-title">系统{currentMetrics.stale ? '（数据已过期）' : ''}</div>
             {renderStatusRow('版本', currentMetrics.system.version || '--')}
             {renderStatusRow('架构', currentMetrics.system.arch || '--')}
           </div>

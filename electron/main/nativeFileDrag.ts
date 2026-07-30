@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, type IpcMainEvent } from 'electron';
+import { app, BrowserWindow, type IpcMainEvent } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,6 +14,12 @@ import {
   resolveRemotePath,
 } from './sftp';
 import { safeSend } from './window';
+import { registerTrustedHandle, registerTrustedOn } from './ipcSecurity';
+
+const ipcMain = {
+  handle: registerTrustedHandle,
+  on: registerTrustedOn,
+};
 
 type RendererDragItem = {
   remotePath: string;

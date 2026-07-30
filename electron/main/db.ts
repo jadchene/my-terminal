@@ -93,6 +93,17 @@ export async function initStorage() {
       value TEXT NOT NULL
     )`,
   );
+  await run(
+    `CREATE TABLE IF NOT EXISTS ssh_host_key (
+      host TEXT NOT NULL,
+      port INTEGER NOT NULL,
+      algorithm TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      key_base64 TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(host, port)
+    )`,
+  );
   const existing = await get<{ value: string }>('SELECT value FROM app_setting WHERE key = ?', [SETTINGS_KEY]);
   if (existing?.value) {
     try {

@@ -18,6 +18,17 @@ namespace MyTerminal.VirtualFileDrag
         {
             Console.InputEncoding = new UTF8Encoding(false);
             Console.OutputEncoding = new UTF8Encoding(false);
+            if (args.Length == 1 && args[0] == "--switch-english-input")
+            {
+                IntPtr foregroundWindow = NativeMethods.GetForegroundWindow();
+                IntPtr imeWindow = NativeMethods.ImmGetDefaultIMEWnd(foregroundWindow);
+                if (imeWindow == IntPtr.Zero)
+                {
+                    return 1;
+                }
+                NativeMethods.SendMessage(imeWindow, 0x0283, new IntPtr(2), IntPtr.Zero);
+                return 0;
+            }
             if (args.Length != 1 || !File.Exists(args[0]))
             {
                 WriteProtocolLine("ERROR\tmanifest-not-found");
@@ -849,6 +860,15 @@ namespace MyTerminal.VirtualFileDrag
 
         [DllImport("user32.dll")]
         internal static extern short GetAsyncKeyState(int virtualKey);
+
+        [DllImport("user32.dll")]
+        internal static extern IntPtr GetForegroundWindow();
+
+        [DllImport("imm32.dll")]
+        internal static extern IntPtr ImmGetDefaultIMEWnd(IntPtr window);
+
+        [DllImport("user32.dll")]
+        internal static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]

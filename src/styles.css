@@ -24,6 +24,33 @@ body,
   color: #ffffff;
 }
 
+.loading-content {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 48px));
+  text-align: center;
+}
+
+.loading-error {
+  color: #ff8b8b;
+  overflow-wrap: anywhere;
+}
+
+.loading button {
+  min-width: 88px;
+  padding: 7px 18px;
+  border: 1px solid #4f4f4f;
+  border-radius: 4px;
+  background: #1f1f1f;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.loading button:hover {
+  background: #2b2b2b;
+}
+
 .app-shell {
   --panel-bg: #000000;
   --line: #2a2a2a;

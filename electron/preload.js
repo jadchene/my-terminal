@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
+const invokeSftp = async (channel, payload) => {
+  const result = await ipcRenderer.invoke(channel, payload);
+  if (!result || typeof result !== 'object' || typeof result.ok !== 'boolean') return result;
+  if (result.ok) return result.value;
+  return Promise.reject(result.error || { code: 'UNKNOWN', message: '未知 SFTP 错误' });
+};
+
 contextBridge.exposeInMainWorld('terminalApi', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (payload) => ipcRenderer.invoke('settings:update', payload),
@@ -32,13 +39,11 @@ contextBridge.exposeInMainWorld('terminalApi', {
   deleteSession: (sessionId) => ipcRenderer.invoke('session:delete', sessionId),
 
   sshConnect: (payload) => ipcRenderer.invoke('ssh:connect', payload),
-  sshSend: (payload) => {
-    ipcRenderer.send('ssh:send', payload);
-    return Promise.resolve(true);
-  },
+  sshSend: (payload) => ipcRenderer.invoke('ssh:send', payload),
   sshResize: (payload) => ipcRenderer.invoke('ssh:resize', payload),
   sshDisconnect: (sessionId) => ipcRenderer.invoke('ssh:disconnect', sessionId),
   sshGetCwd: (sessionId) => ipcRenderer.invoke('ssh:get-cwd', sessionId),
+  sshGetCachedCwd: (sessionId) => ipcRenderer.invoke('ssh:get-cached-cwd', sessionId),
   onSshData: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('ssh:data', handler);
@@ -49,16 +54,45 @@ contextBridge.exposeInMainWorld('terminalApi', {
     ipcRenderer.on('ssh:closed', handler);
     return () => ipcRenderer.off('ssh:closed', handler);
   },
+  onSshHostKeyVerification: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('ssh:host-key-verification', handler);
+    return () => ipcRenderer.off('ssh:host-key-verification', handler);
+  },
+  resolveSshHostKeyVerification: (requestId, accepted) =>
+    ipcRenderer.invoke('ssh:host-key-verification-response', requestId, accepted),
+  onSshHostKeyVerificationExpired: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('ssh:host-key-verification-expired', handler);
+    return () => ipcRenderer.off('ssh:host-key-verification-expired', handler);
+  },
+  onSshHostKeyMismatch: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('ssh:host-key-mismatch', handler);
+    return () => ipcRenderer.off('ssh:host-key-mismatch', handler);
+  },
+  onSshAuthChallenge: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('ssh:auth-challenge', handler);
+    return () => ipcRenderer.off('ssh:auth-challenge', handler);
+  },
+  resolveSshAuthChallenge: (requestId, answers) =>
+    ipcRenderer.invoke('ssh:auth-challenge-response', requestId, answers),
+  onSshAuthChallengeExpired: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('ssh:auth-challenge-expired', handler);
+    return () => ipcRenderer.off('ssh:auth-challenge-expired', handler);
+  },
 
-  sftpList: (payload) => ipcRenderer.invoke('sftp:list', payload),
-  sftpGetHome: (sessionId) => ipcRenderer.invoke('sftp:home', sessionId),
-  sftpMkdir: (payload) => ipcRenderer.invoke('sftp:mkdir', payload),
-  sftpRename: (payload) => ipcRenderer.invoke('sftp:rename', payload),
-  sftpDelete: (payload) => ipcRenderer.invoke('sftp:delete', payload),
-  sftpUpload: (payload) => ipcRenderer.invoke('sftp:upload', payload),
-  sftpDownload: (payload) => ipcRenderer.invoke('sftp:download', payload),
-  sftpUploadBatch: (payload) => ipcRenderer.invoke('sftp:upload-batch', payload),
-  sftpDownloadBatch: (payload) => ipcRenderer.invoke('sftp:download-batch', payload),
+  sftpList: (payload) => invokeSftp('sftp:list', payload),
+  sftpGetHome: (sessionId) => invokeSftp('sftp:home', sessionId),
+  sftpMkdir: (payload) => invokeSftp('sftp:mkdir', payload),
+  sftpRename: (payload) => invokeSftp('sftp:rename', payload),
+  sftpDelete: (payload) => invokeSftp('sftp:delete', payload),
+  sftpUpload: (payload) => invokeSftp('sftp:upload', payload),
+  sftpDownload: (payload) => invokeSftp('sftp:download', payload),
+  sftpUploadBatch: (payload) => invokeSftp('sftp:upload-batch', payload),
+  sftpDownloadBatch: (payload) => invokeSftp('sftp:download-batch', payload),
   sftpStartNativeDrag: (payload) => ipcRenderer.send('sftp:start-native-drag', payload),
   sftpCancelNativeDrag: (token) => ipcRenderer.invoke('sftp:cancel-native-drag', token),
   onSftpNativeDragEnded: (callback) => {
@@ -66,7 +100,7 @@ contextBridge.exposeInMainWorld('terminalApi', {
     ipcRenderer.on('sftp:native-drag-ended', handler);
     return () => ipcRenderer.off('sftp:native-drag-ended', handler);
   },
-  sftpCancelBatch: (payload) => ipcRenderer.invoke('sftp:cancel-batch', payload),
+  sftpCancelBatch: (payload) => invokeSftp('sftp:cancel-batch', payload),
   onSftpProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('sftp:progress', handler);

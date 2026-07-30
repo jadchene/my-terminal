@@ -10,6 +10,13 @@ import { db } from './db';
 
 export const isDev = !app.isPackaged;
 
+const rendererUrlArgument = process.argv.find((argument) => argument.startsWith('--renderer-url='));
+const requestedRendererUrl = rendererUrlArgument?.slice('--renderer-url='.length) || '';
+
+export const rendererDevUrl = isDev && /^http:\/\/localhost:5173\/?$/i.test(requestedRendererUrl)
+  ? 'http://localhost:5173'
+  : '';
+
 export const devAppRoot = path.resolve(__dirname, '..', '..', '..');
 
 export const appRoot = isDev ? devAppRoot : app.getAppPath();

@@ -16,7 +16,7 @@ export const sftpBatchControlMap = new Map<string, SftpBatchControl>();
 
 export const sftpProgressThrottleMap = new Map<string, SftpProgressThrottleState>();
 
-export const DEFAULT_TRANSFER_CONCURRENCY = Math.max(2, Math.min(8, Math.floor((os.cpus()?.length || 2) / 2)));
+export const DEFAULT_TRANSFER_CONCURRENCY = Math.max(1, Math.min(3, Math.floor((os.cpus()?.length || 2) / 2)));
 
 export const connectionSessionMap = new Map<number, Session>();
 

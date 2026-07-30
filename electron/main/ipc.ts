@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,11 +18,40 @@ import { getRemoteShellCwd, updateCwdFromPrompt } from './ssh';
 import { safeSend } from './window';
 import { switchToEnglishInputMethod } from './inputMethod';
 import { registerNativeFileDragIpc } from './nativeFileDrag';
+import { registerTrustedHandle, registerTrustedOn } from './ipcSecurity';
+import { cancelPendingHostKeyRequests, createHostVerifier, registerHostKeyIpc } from './hostKey';
+import { cancelPendingAuthChallenges, registerAuthChallengeIpc, requestAuthChallengeAnswers } from './authChallenge';
+import { isStoredPasswordPrompt } from './authPrompt';
+import { toSftpErrorPayload } from './sftpError';
+import { createTemporaryDownloadPath } from './downloadPath';
+import {
+  SSH_CONNECT_CANCELLED,
+  beginConnectionAttempt,
+  cancelPendingConnectionAttempt,
+  releaseConnectionAttempt,
+} from './connectionAttempt';
+
+const ipcMain = {
+  handle: (
+    channel: string,
+    listener: (event: import('electron').IpcMainInvokeEvent, ...args: any[]) => any,
+  ) => registerTrustedHandle(channel, async (event, ...args) => {
+    if (!channel.startsWith('sftp:')) return listener(event, ...args);
+    try {
+      return { ok: true, value: await listener(event, ...args) };
+    } catch (error) {
+      return { ok: false, error: toSftpErrorPayload(error) };
+    }
+  }),
+  on: registerTrustedOn,
+};
 
 const SSH_DATA_FLUSH_DELAY_MS = 4;
 const MAX_SSH_DATA_IPC_CHUNK = 64 * 1024;
 
 export function registerIpc() {
+  registerHostKeyIpc();
+  registerAuthChallengeIpc();
   registerNativeFileDragIpc();
   const sshDataBufferMap = new Map<number, string>();
   const sshDataTimerMap = new Map<number, ReturnType<typeof setTimeout>>();
@@ -170,9 +199,9 @@ export function registerIpc() {
       const inserted = await get<{ id: number }>('SELECT last_insert_rowid() AS id');
       const sessionId = Number(inserted?.id || 0);
       if (sessionId > 0) {
-        const trimmedPassword = String(payload.password || '').trim();
-        if (payload.remember_password === 1 && trimmedPassword) {
-          await setSessionPasswordToKeytar(sessionId, trimmedPassword);
+        const passwordValue = String(payload.password || '');
+        if (payload.remember_password === 1 && passwordValue.length > 0) {
+          await setSessionPasswordToKeytar(sessionId, passwordValue);
         } else {
           await deleteSessionPasswordFromKeytar(sessionId);
         }
@@ -200,11 +229,11 @@ export function registerIpc() {
         payload.id,
       ],
     );
-    const trimmedPassword = String(payload.password || '').trim();
+    const passwordValue = String(payload.password || '');
     if (payload.remember_password !== 1) {
       await deleteSessionPasswordFromKeytar(payload.id);
-    } else if (trimmedPassword) {
-      await setSessionPasswordToKeytar(payload.id, trimmedPassword);
+    } else if (passwordValue.length > 0) {
+      await setSessionPasswordToKeytar(payload.id, passwordValue);
     }
     return true;
   });
@@ -223,55 +252,96 @@ export function registerIpc() {
       const connectPayload = typeof payload === 'number' ? { sessionId: payload } : payload;
       const profileSessionId = connectPayload.sessionId;
       const connectionId = connectPayload.connectionId ?? profileSessionId;
-      const session = await loadSession(profileSessionId);
-      const password = connectPayload.password ?? session.password;
-      const savePassword = !!connectPayload.savePassword && !!connectPayload.password;
+      cancelPendingHostKeyRequests(connectionId);
+      cancelPendingAuthChallenges(connectionId);
+      const attempt = beginConnectionAttempt(connectionId);
       flushSshData(connectionId);
-      await cleanupConnectionState(connectionId);
-    return new Promise<boolean>((resolve, reject) => {
-      const client = new Client();
-      let settled = false;
-      const fail = (err: unknown) => {
-        if (settled) return;
-        settled = true;
-        void cleanupConnectionState(connectionId);
-        reject(err);
-      };
-      const ok = () => {
-        if (settled) return;
-        settled = true;
-        resolve(true);
-      };
+      try {
+        await cleanupConnectionState(connectionId);
+        if (attempt.cancelled) throw new Error(SSH_CONNECT_CANCELLED);
+        const session = await loadSession(profileSessionId);
+        if (attempt.cancelled) throw new Error(SSH_CONNECT_CANCELLED);
+        const password = connectPayload.password ?? session.password;
+        const savePassword = !!connectPayload.savePassword && !!connectPayload.password;
+        return await new Promise<boolean>((resolve, reject) => {
+       const client = new Client();
+       attempt.client = client;
+       let settled = false;
+       let hostKeyMismatch = false;
+       const fail = (err: unknown) => {
+         if (settled) return;
+         settled = true;
+         releaseConnectionAttempt(connectionId, attempt);
+         void cleanupConnectionState(connectionId, client);
+         if (attempt.cancelled) {
+           reject(new Error(SSH_CONNECT_CANCELLED));
+           return;
+         }
+         reject(hostKeyMismatch ? new Error('SSH_HOST_KEY_MISMATCH') : err);
+       };
+       attempt.reject = (error) => fail(error);
+       const ok = () => {
+         if (settled) return;
+         if (attempt.cancelled) {
+           fail(new Error(SSH_CONNECT_CANCELLED));
+           return;
+         }
+         settled = true;
+         releaseConnectionAttempt(connectionId, attempt);
+         resolve(true);
+       };
       client
         .on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
+          if (attempt.cancelled) {
+            finish([]);
+            return;
+          }
           if (!prompts || prompts.length === 0) {
             finish([]);
             return;
           }
-          // Fallback for servers that require keyboard-interactive auth.
-          if (prompts.length === 1) {
-            finish([password]);
+          const answers = prompts.map(() => '');
+          const unknownPrompts: Array<{ prompt: string; echo: boolean; index: number }> = [];
+          prompts.forEach((prompt: { prompt?: string; echo?: boolean }, index: number) => {
+            const label = String(prompt?.prompt || '认证信息');
+            if (isStoredPasswordPrompt(label)) {
+              answers[index] = password;
+              return;
+            }
+            unknownPrompts.push({ prompt: String(prompt?.prompt || '认证信息'), echo: !!prompt?.echo, index });
+          });
+          if (unknownPrompts.length === 0) {
+            finish(answers);
             return;
           }
-          finish(
-            prompts.map((prompt: { prompt?: string }) => {
-              const label = String(prompt?.prompt || '').toLowerCase();
-              if (
-                label.includes('password') ||
-                label.includes('passcode') ||
-                label.includes('passwd') ||
-                label.includes('密码')
-              ) {
-                return password;
-              }
-              return '';
-            }),
-          );
+          void requestAuthChallengeAnswers(
+            connectionId,
+            session.name,
+            unknownPrompts.map(({ prompt, echo }) => ({ prompt, echo })),
+          ).then((challengeAnswers) => {
+            if (!challengeAnswers || challengeAnswers.length !== unknownPrompts.length) {
+              finish([]);
+              return;
+            }
+            unknownPrompts.forEach(({ index }, answerIndex) => {
+              answers[index] = challengeAnswers[answerIndex];
+            });
+            finish(answers);
+          }).catch(() => finish([]));
         })
         .on('ready', () => {
+          if (attempt.cancelled) {
+            client.destroy();
+            return;
+          }
           client.shell({ term: 'xterm-256color' }, (err, stream) => {
             if (err) {
               fail(err);
+              return;
+            }
+            if (attempt.cancelled) {
+              stream.close();
+              client.destroy();
               return;
             }
             connectionSessionMap.set(connectionId, { ...session, password });
@@ -283,8 +353,8 @@ export function registerIpc() {
             });
             stream.on('close', () => {
               flushSshData(connectionId, true);
-              void cleanupConnectionState(connectionId).finally(() => {
-                safeSend('ssh:closed', { sessionId: connectionId });
+              void cleanupConnectionState(connectionId, client).then((cleaned) => {
+                if (cleaned) safeSend('ssh:closed', { sessionId: connectionId });
               });
             });
             if (savePassword) {
@@ -309,8 +379,19 @@ export function registerIpc() {
           tryKeyboard: true,
           keepaliveInterval: 10000,
           readyTimeout: 20000,
+          hostVerifier: createHostVerifier(
+            session,
+            () => {
+              hostKeyMismatch = true;
+            },
+            connectionId,
+          ),
         });
-    });
+        });
+      } catch (error) {
+        releaseConnectionAttempt(connectionId, attempt);
+        throw error;
+      }
     },
   );
 
@@ -322,13 +403,6 @@ export function registerIpc() {
   };
   ipcMain.handle('ssh:send', async (_, payload: { sessionId: number; input: string }) => {
     return writeSshInput(payload);
-  });
-  ipcMain.on('ssh:send', (_, payload: { sessionId: number; input: string }) => {
-    try {
-      writeSshInput(payload);
-    } catch (error) {
-      console.warn('[SSH] Failed to send input:', error);
-    }
   });
   ipcMain.handle('ssh:resize', async (_, payload: { sessionId: number; cols: number; rows: number }) => {
     const state = sshStateMap.get(payload.sessionId);
@@ -343,6 +417,9 @@ export function registerIpc() {
     }
   });
   ipcMain.handle('ssh:disconnect', async (_, sessionId: number) => {
+    cancelPendingHostKeyRequests(sessionId);
+    cancelPendingAuthChallenges(sessionId);
+    cancelPendingConnectionAttempt(sessionId);
     flushSshData(sessionId, true);
     await cleanupConnectionState(sessionId);
     return true;
@@ -359,41 +436,42 @@ export function registerIpc() {
     if (cached && cached.trim()) return cached.trim();
     return '';
   });
+  ipcMain.handle('ssh:get-cached-cwd', async (_, sessionId: number) => {
+    if (!sshStateMap.has(sessionId)) return '';
+    return lastKnownCwdMap.get(sessionId)?.trim() || '';
+  });
 
-  ipcMain.handle('sftp:list', async (_, payload: { sessionId: number; path: string; showHidden: boolean }) => {
-    try {
-      requireConnected(payload.sessionId);
-      const session = await getSessionForConnection(payload.sessionId);
-      const client = await getOrCreateSftp(payload.sessionId, session);
-      const targetPath = await resolveRemotePath(client, payload.path);
-      const list = await client.list(targetPath);
-      return list
-        .filter((item: { name: string }) => payload.showHidden || !item.name.startsWith('.'))
-        .map((item: any) => ({
-          type: item.type,
-          name: item.name,
-          size: Number(item.size || 0),
-          modifyTime: Number(item.modifyTime || 0),
-          accessTime: Number(item.accessTime || 0),
-          rights: item.rights || undefined,
-          owner: item.owner,
-          group: item.group,
-          longname: item.longname,
-        }))
-        .sort((a: { type: string; name: string }, b: { type: string; name: string }) => {
-          const aDir = a.type === 'd' ? 0 : 1;
-          const bDir = b.type === 'd' ? 0 : 1;
-          if (aDir !== bDir) return aDir - bDir;
-          return a.name.localeCompare(b.name, 'zh-Hans-CN', { sensitivity: 'base', numeric: true });
-        });
-    } catch (error) {
-      const msg = String(error).toLowerCase();
-      if (msg.includes('no such file') || msg.includes('not connected') || msg.includes('closed') || msg.includes('stream.on')) {
-        console.warn(`[SFTP] List suppressed for sessionId ${payload.sessionId}: ${msg}`);
-        return [];
-      }
-      throw error;
-    }
+  ipcMain.handle('sftp:list', async (_, payload: {
+    sessionId: number;
+    requestSequence: number;
+    path: string;
+    showHidden: boolean;
+  }) => {
+    requireConnected(payload.sessionId);
+    const session = await getSessionForConnection(payload.sessionId);
+    const client = await getOrCreateSftp(payload.sessionId, session);
+    const targetPath = await resolveRemotePath(client, payload.path);
+    const list = await client.list(targetPath);
+    const items = list
+      .filter((item: { name: string }) => payload.showHidden || !item.name.startsWith('.'))
+      .map((item: any) => ({
+        type: item.type,
+        name: item.name,
+        size: Number(item.size || 0),
+        modifyTime: Number(item.modifyTime || 0),
+        accessTime: Number(item.accessTime || 0),
+        rights: item.rights || undefined,
+        owner: item.owner,
+        group: item.group,
+        longname: item.longname,
+      }))
+      .sort((a: { type: string; name: string }, b: { type: string; name: string }) => {
+        const aDir = a.type === 'd' ? 0 : 1;
+        const bDir = b.type === 'd' ? 0 : 1;
+        if (aDir !== bDir) return aDir - bDir;
+        return a.name.localeCompare(b.name, 'zh-Hans-CN', { sensitivity: 'base', numeric: true });
+      });
+    return { sessionId: payload.sessionId, requestSequence: payload.requestSequence, items };
   });
   ipcMain.handle('sftp:home', async (_, sessionId: number) => {
     requireConnected(sessionId);
@@ -441,8 +519,21 @@ export function registerIpc() {
     const fileName = path.basename(remotePath.replace(/\/+$/, '')) || path.basename(remotePath);
     const downloadDir = getDefaultDownloadDir();
     await fs.promises.mkdir(downloadDir, { recursive: true });
-    const localPath = await ensureUniqueLocalPath(downloadDir, fileName || 'download');
-    await client.fastGet(remotePath, localPath);
+    let localPath = await ensureUniqueLocalPath(downloadDir, fileName || 'download');
+    const temporaryPath = createTemporaryDownloadPath(localPath);
+    try {
+      await client.fastGet(remotePath, temporaryPath);
+      try {
+        await fs.promises.access(localPath, fs.constants.F_OK);
+        localPath = await ensureUniqueLocalPath(downloadDir, path.basename(localPath));
+      } catch {
+        // The allocated final path is still free.
+      }
+      await fs.promises.rename(temporaryPath, localPath);
+    } catch (error) {
+      await fs.promises.rm(temporaryPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
     return true;
   });
   ipcMain.handle('sftp:upload-batch', async (_, payload: { sessionId: number; remoteDir: string; localPaths?: string[] }) => {
@@ -465,14 +556,10 @@ export function registerIpc() {
     const batch = sftpBatchControlMap.get(payload.batchId);
     if (!batch || batch.sessionId !== payload.sessionId) return false;
     batch.cancelled = true;
-    if (batch.client && batch.ownsClient) {
-      try {
-        await batch.client.end();
-      } catch {
-        // Ignore close errors when cancelling transfer.
-      }
-      batch.client = undefined;
-    }
+    const clients = new Set<any>([...(batch.clients || []), ...(batch.client ? [batch.client] : [])]);
+    if (batch.ownsClient) await Promise.all(Array.from(clients, async (client) => client.end().catch(() => null)));
+    batch.client = undefined;
+    batch.clients = [];
     return true;
   });
   ipcMain.handle('dialog:pick-directory', async (_, defaultPath?: string) => {

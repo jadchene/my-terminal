@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { SftpTransferBatchResult, SftpTransferError, SftpTransferProgress } from '../types';
+import { formatSftpError } from '../utils/sftpError';
 
 export type TransferRow = {
   key: string;
@@ -96,7 +97,9 @@ export function useTransferQueue(params: UseTransferQueueParams) {
     setTransferRows((prev) => prev.filter((it) => !(it.sessionId === event.sessionId && it.batchId === event.batchId)));
     if (event.failedCount > 0) {
       const actionText = event.direction === 'upload' ? '上传' : '下载';
-      const lines = failedItems.slice(0, 8).map((it, idx) => `${idx + 1}. ${it.name}: ${it.error}`);
+      const lines = failedItems.slice(0, 8).map((it, idx) =>
+        `${idx + 1}. ${it.name}: ${formatSftpError({ code: it.errorCode, message: it.error })}`,
+      );
       const remain = Math.max(0, failedItems.length - lines.length);
       const details = lines.length > 0 ? `\n\n失败明细:\n${lines.join('\n')}` : '';
       const more = remain > 0 ? `\n... 另有 ${remain} 个失败项` : '';

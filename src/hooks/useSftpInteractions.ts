@@ -1,6 +1,8 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { Session, Settings, SftpItem, TreeContextMenu } from '../types';
 import { getParentSftpPath } from '../utils/sftpPath';
+import { formatSftpError, isSilentSftpError } from '../utils/sftpError';
+import { shouldApplyCwdCalibration } from '../utils/sftpCwd';
 
 type SftpMenuPayload = Extract<TreeContextMenu, { type: 'sftp' }>;
 
@@ -16,8 +18,9 @@ type UseSftpInteractionsParams = {
   setSftpUploadDropOver: Dispatch<SetStateAction<boolean>>;
   setTreeMenu: Dispatch<SetStateAction<TreeContextMenu | null>>;
   sftpInternalDragRef: MutableRefObject<string | null>;
-  refreshSftp: (targetPath?: string) => Promise<void>;
-  navigateSftp: (nextPath: string) => Promise<void>;
+  refreshSftp: (targetPath?: string) => Promise<boolean>;
+  navigateSftp: (nextPath: string) => Promise<boolean>;
+  getCurrentSftpLocation: () => { sessionId: number | null; path: string };
   clearSftpSelectionNow: () => void;
   getLocalPathsFromDrop: (event: React.DragEvent) => string[];
   submitSftpPath: () => Promise<void>;
@@ -42,6 +45,7 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
     sftpInternalDragRef,
     refreshSftp,
     navigateSftp,
+    getCurrentSftpLocation,
     clearSftpSelectionNow,
     getLocalPathsFromDrop,
     submitSftpPath,
@@ -50,6 +54,15 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
     askPrompt,
     askConfirm,
   } = params;
+
+  const runSftpAction = async (action: () => Promise<unknown>, title = 'SFTP') => {
+    try {
+      return await action();
+    } catch (error) {
+      if (!isSilentSftpError(error)) await showAlert(formatSftpError(error), title);
+      return undefined;
+    }
+  };
 
   useEffect(() => window.terminalApi.onSftpNativeDragEnded((event) => {
     if (sftpInternalDragRef.current === event.token) {
@@ -92,10 +105,12 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
     if (!activeSessionId) return;
     const nativeDragToken = sftpInternalDragRef.current;
     if (nativeDragToken) {
-      const cancelled = await window.terminalApi.sftpCancelNativeDrag(nativeDragToken);
-      if (cancelled && sftpInternalDragRef.current === nativeDragToken) {
-        sftpInternalDragRef.current = null;
-      }
+      await runSftpAction(async () => {
+        const cancelled = await window.terminalApi.sftpCancelNativeDrag(nativeDragToken);
+        if (cancelled && sftpInternalDragRef.current === nativeDragToken) {
+          sftpInternalDragRef.current = null;
+        }
+      }, 'SFTP 拖拽');
       return;
     }
     const localPaths = getLocalPathsFromDrop(e);
@@ -104,60 +119,90 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
       return;
     }
     clearSftpSelectionNow();
-    await window.terminalApi.sftpUploadBatch({ sessionId: activeSessionId, remoteDir: sftpPath, localPaths });
-    await refreshSftp();
+    await runSftpAction(async () => {
+      await window.terminalApi.sftpUploadBatch({ sessionId: activeSessionId, remoteDir: sftpPath, localPaths });
+      await refreshSftp();
+    });
   };
 
   const onToggleShowHidden = async () => {
     if (!settings) return;
-    const saved = await window.terminalApi.updateSettings({
-      ui: { ...settings.ui, showHiddenFiles: !settings.ui.showHiddenFiles },
-    });
-    setSettings(saved);
+    try {
+      const saved = await window.terminalApi.updateSettings({
+        ui: { ...settings.ui, showHiddenFiles: !settings.ui.showHiddenFiles },
+      });
+      setSettings(saved);
+    } catch (error) {
+      await showAlert(error instanceof Error ? error.message : String(error), '保存设置失败');
+    }
   };
 
   const onRefresh = async () => {
     clearSftpSelectionNow();
-    await refreshSftp();
+    await runSftpAction(() => refreshSftp());
   };
-  const onGoParent = async () => navigateSftp(getParentSftpPath(sftpPath));
+  const onGoParent = async () => {
+    await runSftpAction(() => navigateSftp(getParentSftpPath(sftpPath)));
+  };
 
   const onFollowCwd = async () => {
     if (!activeSessionId) return;
+    const requestedSessionId = activeSessionId;
+    let initialPath = '';
     try {
-      const cwd = await window.terminalApi.sshGetCwd(activeSessionId);
-      if (cwd && cwd.trim()) {
-        await navigateSftp(cwd.trim());
-        return;
+      const cached = await window.terminalApi.sshGetCachedCwd(requestedSessionId);
+      if (getCurrentSftpLocation().sessionId !== requestedSessionId) return;
+      if (cached.trim() && await navigateSftp(cached.trim())) {
+        initialPath = cached.trim();
       }
-      const home = await window.terminalApi.sftpGetHome(activeSessionId);
-      await navigateSftp(home || '~');
+      if (!initialPath) {
+        const home = await window.terminalApi.sftpGetHome(requestedSessionId);
+        if (getCurrentSftpLocation().sessionId !== requestedSessionId) return;
+        const target = home?.trim() || '~';
+        if (await navigateSftp(target)) initialPath = target;
+      }
     } catch (error) {
       try {
-        const home = await window.terminalApi.sftpGetHome(activeSessionId);
-        await navigateSftp(home || '~');
-      } catch {
-        await showAlert(`目录跟随失败: ${String(error)}`, 'SFTP');
+        const home = await window.terminalApi.sftpGetHome(requestedSessionId);
+        if (getCurrentSftpLocation().sessionId !== requestedSessionId) return;
+        const target = home?.trim() || '~';
+        if (await navigateSftp(target)) initialPath = target;
+      } catch (fallbackError) {
+        if (!isSilentSftpError(fallbackError)) await showAlert(formatSftpError(fallbackError), 'SFTP');
       }
     }
+    if (!initialPath) return;
+    void window.terminalApi.sshGetCwd(requestedSessionId).then(async (livePath) => {
+      if (!shouldApplyCwdCalibration(
+        requestedSessionId,
+        initialPath,
+        getCurrentSftpLocation(),
+        livePath,
+      )) return;
+      await navigateSftp(livePath.trim());
+    }).catch(() => undefined);
   };
 
   const onCreateDir = async () => {
     if (!activeSession || !activeSessionId) return;
     const name = await askPrompt('目录名');
     if (!name) return;
-    await window.terminalApi.sftpMkdir({
-      sessionId: activeSessionId,
-      path: `${sftpPath.replace(/\/$/, '')}/${name}`,
+    await runSftpAction(async () => {
+      await window.terminalApi.sftpMkdir({
+        sessionId: activeSessionId,
+        path: `${sftpPath.replace(/\/$/, '')}/${name}`,
+      });
+      await refreshSftp();
     });
-    await refreshSftp();
   };
 
   const onBatchUpload = async () => {
     if (!activeSession || !activeSessionId) return;
     clearSftpSelectionNow();
-    await window.terminalApi.sftpUploadBatch({ sessionId: activeSessionId, remoteDir: sftpPath });
-    await refreshSftp();
+    await runSftpAction(async () => {
+      await window.terminalApi.sftpUploadBatch({ sessionId: activeSessionId, remoteDir: sftpPath });
+      await refreshSftp();
+    });
   };
 
   const onBatchDownload = async () => {
@@ -168,7 +213,7 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
       return;
     }
     clearSftpSelectionNow();
-    await window.terminalApi.sftpDownloadBatch({ sessionId: activeSessionId, remotePaths: selectedPaths });
+    await runSftpAction(() => window.terminalApi.sftpDownloadBatch({ sessionId: activeSessionId, remotePaths: selectedPaths }));
   };
 
   const onPathBlur = () => setSftpPathInput(sftpPath);
@@ -179,7 +224,7 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
       return;
     }
     const previousToken = sftpInternalDragRef.current;
-    if (previousToken) void window.terminalApi.sftpCancelNativeDrag(previousToken);
+    if (previousToken) void window.terminalApi.sftpCancelNativeDrag(previousToken).catch(() => false);
     const picked = selectedSftpPaths.includes(fullPath) && selectedSftpPaths.length > 0 ? selectedSftpPaths : [fullPath];
     const token = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     sftpInternalDragRef.current = token;
@@ -222,8 +267,10 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
 
   const onDownloadSftpMenu = async (menu: SftpMenuPayload) => {
     clearSftpSelectionNow();
-    await window.terminalApi.sftpDownloadBatch({ sessionId: menu.sessionId, remotePaths: [menu.path] });
-    setTreeMenu(null);
+    await runSftpAction(async () => {
+      await window.terminalApi.sftpDownloadBatch({ sessionId: menu.sessionId, remotePaths: [menu.path] });
+      setTreeMenu(null);
+    });
   };
 
   const onRenameSftpMenu = async (menu: SftpMenuPayload) => {
@@ -234,16 +281,20 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
     }
     const parentDir = menu.path.replace(/\/[^/]+$/, '') || '/';
     const nextPath = `${parentDir.replace(/\/$/, '')}/${newName}`;
-    await window.terminalApi.sftpRename({ sessionId: menu.sessionId, from: menu.path, to: nextPath });
-    await refreshSftp();
-    setTreeMenu(null);
+    await runSftpAction(async () => {
+      await window.terminalApi.sftpRename({ sessionId: menu.sessionId, from: menu.path, to: nextPath });
+      await refreshSftp();
+      setTreeMenu(null);
+    });
   };
 
   const onDeleteSftpMenu = async (menu: SftpMenuPayload) => {
     if (!(await askConfirm(`确定删除 ${menu.name} 吗？`))) return;
-    await window.terminalApi.sftpDelete({ sessionId: menu.sessionId, path: menu.path, isDir: menu.isDir });
-    await refreshSftp();
-    setTreeMenu(null);
+    await runSftpAction(async () => {
+      await window.terminalApi.sftpDelete({ sessionId: menu.sessionId, path: menu.path, isDir: menu.isDir });
+      await refreshSftp();
+      setTreeMenu(null);
+    });
   };
 
   return {
@@ -265,7 +316,9 @@ export function useSftpInteractions(params: UseSftpInteractionsParams) {
     onEndItemDrag,
     onOpenItemMenu,
     onToggleItemSelect: setSftpSelection,
-    onOpenDir: navigateSftp,
+    onOpenDir: async (nextPath: string) => {
+      await navigateSftp(nextPath);
+    },
     onDownloadSftpMenu,
     onRenameSftpMenu,
     onDeleteSftpMenu,

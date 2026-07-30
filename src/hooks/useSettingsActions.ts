@@ -19,6 +19,7 @@ type UseSettingsActionsParams = {
   setSettingsTab: Dispatch<SetStateAction<'appearance' | 'behavior' | 'system'>>;
   setCursorStyleMenuOpen: Dispatch<SetStateAction<boolean>>;
   setMenuOpen: Dispatch<SetStateAction<boolean>>;
+  showAlert: (message: string, title?: string) => Promise<void>;
 };
 
 export function useSettingsActions(params: UseSettingsActionsParams) {
@@ -32,7 +33,12 @@ export function useSettingsActions(params: UseSettingsActionsParams) {
     setSettingsTab,
     setCursorStyleMenuOpen,
     setMenuOpen,
+    showAlert,
   } = params;
+
+  const showSettingsError = async (error: unknown) => {
+    await showAlert(error instanceof Error ? error.message : String(error), '设置操作失败');
+  };
 
   const openSettingsModal = () => {
     if (!settings) return;
@@ -49,20 +55,28 @@ export function useSettingsActions(params: UseSettingsActionsParams) {
 
   const toggleSidebarVisible = async () => {
     if (!settings) return;
-    const saved = await window.terminalApi.updateSettings({
-      ui: { ...settings.ui, sidebarVisible: !settings.ui.sidebarVisible },
-    });
-    setSettings(saved);
+    try {
+      const saved = await window.terminalApi.updateSettings({
+        ui: { ...settings.ui, sidebarVisible: !settings.ui.sidebarVisible },
+      });
+      setSettings(saved);
+    } catch (error) {
+      await showSettingsError(error);
+    }
   };
 
   const pickDefaultDownloadDir = async () => {
     if (!settingsDraft) return;
-    const picked = await window.terminalApi.pickDirectory(settingsDraft.behavior.defaultDownloadDir || runtimeInfo?.runtimeDir);
-    if (!picked) return;
-    setSettingsDraft({
-      ...settingsDraft,
-      behavior: { ...settingsDraft.behavior, defaultDownloadDir: picked },
-    });
+    try {
+      const picked = await window.terminalApi.pickDirectory(settingsDraft.behavior.defaultDownloadDir || runtimeInfo?.runtimeDir);
+      if (!picked) return;
+      setSettingsDraft({
+        ...settingsDraft,
+        behavior: { ...settingsDraft.behavior, defaultDownloadDir: picked },
+      });
+    } catch (error) {
+      await showSettingsError(error);
+    }
   };
 
   const cancelSettingsModal = () => {
@@ -88,12 +102,16 @@ export function useSettingsActions(params: UseSettingsActionsParams) {
         autoSwitchEnglishInputMethod: settingsDraft.behavior.autoSwitchEnglishInputMethod ?? false,
       },
     };
-    const saved = await window.terminalApi.updateSettings(normalizedDraft);
-    setSettings(saved);
-    setSettingsDraft(null);
-    setShowSettings(false);
-    setSettingsTab('appearance');
-    setCursorStyleMenuOpen(false);
+    try {
+      const saved = await window.terminalApi.updateSettings(normalizedDraft);
+      setSettings(saved);
+      setSettingsDraft(null);
+      setShowSettings(false);
+      setSettingsTab('appearance');
+      setCursorStyleMenuOpen(false);
+    } catch (error) {
+      await showSettingsError(error);
+    }
   };
 
   return {

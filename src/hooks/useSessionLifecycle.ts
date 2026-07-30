@@ -1,5 +1,6 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { Session, Settings } from '../types';
+import { formatSftpError, isSilentSftpError } from '../utils/sftpError';
 
 type UseSessionLifecycleParams = {
   settings: Settings | null;
@@ -20,7 +21,9 @@ type UseSessionLifecycleParams = {
   clearSftpSelection: () => void;
   sftpPath: string;
   clearSftpItems: () => void;
-  refreshSftp: (targetPath?: string) => Promise<void>;
+  hasSftpSessionState: (sessionId: number) => boolean;
+  refreshSftp: (targetPath?: string) => Promise<boolean>;
+  showAlert: (message: string, title?: string) => Promise<void>;
 };
 
 export function useSessionLifecycle(params: UseSessionLifecycleParams) {
@@ -43,8 +46,21 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
     clearSftpSelection,
     sftpPath,
     clearSftpItems,
+    hasSftpSessionState,
     refreshSftp,
+    showAlert,
   } = params;
+  const lastSftpErrorRef = useRef({ message: '', timestamp: 0 });
+
+  const reportSftpError = useCallback(async (error: unknown) => {
+    if (isSilentSftpError(error)) return;
+    const message = formatSftpError(error);
+    const now = Date.now();
+    const previous = lastSftpErrorRef.current;
+    if (previous.message === message && now - previous.timestamp < 2_000) return;
+    lastSftpErrorRef.current = { message, timestamp: now };
+    await showAlert(message, 'SFTP');
+  }, [showAlert]);
 
   useEffect(() => {
     if (!settings) return;
@@ -83,16 +99,31 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
 
   useEffect(() => {
     if (!activeSessionId) return;
-    window.terminalApi
-      .sftpGetHome(activeSessionId)
-      .then(async (home) => {
+    if (hasSftpSessionState(activeSessionId)) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const home = await window.terminalApi.sftpGetHome(activeSessionId);
+        if (cancelled) return;
         const target = home?.trim() || '~';
-        setSftpPath(target);
         clearSftpSelection();
-        await refreshSftp(target);
-      })
-      .catch(() => refreshSftp('~'));
-  }, [activeSessionId, setSftpPath, clearSftpSelection, refreshSftp]);
+        const accepted = await refreshSftp(target);
+        if (!cancelled && accepted) setSftpPath(target);
+      } catch (error) {
+        if (cancelled || isSilentSftpError(error)) return;
+        try {
+          clearSftpSelection();
+          const accepted = await refreshSftp('~');
+          if (!cancelled && accepted) setSftpPath('~');
+        } catch (fallbackError) {
+          if (!cancelled) await reportSftpError(fallbackError);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, setSftpPath, clearSftpSelection, hasSftpSessionState, refreshSftp, reportSftpError]);
 
   useEffect(() => {
     window.terminalApi.setMetricsSession(activeSessionId).catch(() => null);
@@ -115,13 +146,25 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
 
   useEffect(() => {
     if (!settings || !activeSessionId) return;
-    refreshSftp().catch(() => null);
-  }, [settings?.ui.showHiddenFiles, activeSessionId, refreshSftp]);
+    let cancelled = false;
+    void refreshSftp().catch(async (error) => {
+      if (!cancelled) await reportSftpError(error);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings?.ui.showHiddenFiles, activeSessionId, refreshSftp, reportSftpError]);
 
   useEffect(() => {
     if (!settings || !activeSessionId || sidebarTab !== 'sftp') return;
-    refreshSftp().catch(() => null);
-  }, [sidebarTab, activeSessionId, refreshSftp]);
+    let cancelled = false;
+    void refreshSftp().catch(async (error) => {
+      if (!cancelled) await reportSftpError(error);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sidebarTab, activeSessionId, refreshSftp, reportSftpError]);
 
   useEffect(() => {
     if (!activeSessionId) {

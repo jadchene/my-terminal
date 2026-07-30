@@ -45,6 +45,10 @@ export type Session = {
 };
 
 export type Metrics = {
+  sessionId: number | null;
+  sequence: number;
+  stale: boolean;
+  sampledAt: number;
   system: {
     version: string;
     arch: string;
@@ -134,6 +138,7 @@ export type SftpTransferError = {
   batchId: string;
   direction: 'upload' | 'download';
   name: string;
+  errorCode: import('./utils/sftpError').SftpErrorCode;
   error: string;
 };
 
@@ -171,10 +176,44 @@ declare global {
       sshResize: (payload: { sessionId: number; cols: number; rows: number }) => Promise<boolean>;
       sshDisconnect: (sessionId: number) => Promise<boolean>;
       sshGetCwd: (sessionId: number) => Promise<string>;
+      sshGetCachedCwd: (sessionId: number) => Promise<string>;
       onSshData: (cb: (event: { sessionId: number; data: string }) => void) => () => void;
       onSshClosed: (cb: (event: { sessionId: number }) => void) => () => void;
+      onSshHostKeyVerification: (cb: (event: {
+        requestId: string;
+        sessionId: number;
+        name: string;
+        host: string;
+        port: number;
+        algorithm: string;
+        fingerprint: string;
+      }) => void) => () => void;
+      resolveSshHostKeyVerification: (requestId: string, accepted: boolean) => Promise<boolean>;
+      onSshHostKeyVerificationExpired: (cb: (event: { requestId: string }) => void) => () => void;
+      onSshHostKeyMismatch: (cb: (event: {
+        sessionId: number;
+        name: string;
+        host: string;
+        port: number;
+        algorithm: string;
+        expectedFingerprint: string;
+        actualFingerprint: string;
+      }) => void) => () => void;
+      onSshAuthChallenge: (cb: (event: {
+        requestId: string;
+        connectionId: number;
+        sessionName: string;
+        prompts: Array<{ prompt: string; echo: boolean }>;
+      }) => void) => () => void;
+      resolveSshAuthChallenge: (requestId: string, answers: string[] | null) => Promise<boolean>;
+      onSshAuthChallengeExpired: (cb: (event: { requestId: string }) => void) => () => void;
 
-      sftpList: (payload: { sessionId: number; path: string; showHidden: boolean }) => Promise<SftpItem[]>;
+      sftpList: (payload: {
+        sessionId: number;
+        requestSequence: number;
+        path: string;
+        showHidden: boolean;
+      }) => Promise<{ sessionId: number; requestSequence: number; items: SftpItem[] }>;
       sftpGetHome: (sessionId: number) => Promise<string>;
       sftpMkdir: (payload: { sessionId: number; path: string }) => Promise<boolean>;
       sftpRename: (payload: { sessionId: number; from: string; to: string }) => Promise<boolean>;

@@ -1,28 +1,19 @@
+import { app } from 'electron';
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 let switching = false;
 let lastSwitchAt = 0;
 
-const switchToEnglishScript = `
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public static class InputMethodSwitcher {
-  [DllImport("user32.dll")]
-  public static extern IntPtr GetForegroundWindow();
-  [DllImport("imm32.dll")]
-  public static extern IntPtr ImmGetDefaultIMEWnd(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+function getNativeHelperPath(): string | null {
+  const name = 'my-terminal-virtual-file-drag.exe';
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'dist-electron', 'native', name)
+    : path.resolve(__dirname, '..', '..', 'native', name);
+  return fs.existsSync(candidate) ? candidate : null;
 }
-"@
-$hwnd = [InputMethodSwitcher]::GetForegroundWindow()
-$ime = [InputMethodSwitcher]::ImmGetDefaultIMEWnd($hwnd)
-if ($ime -ne [IntPtr]::Zero) {
-  [InputMethodSwitcher]::SendMessage($ime, 0x0283, [IntPtr]2, [IntPtr]0) | Out-Null
-}
-`;
 
 export function switchToEnglishInputMethod(): Promise<boolean> {
   if (os.platform() !== 'win32') return Promise.resolve(false);
@@ -31,11 +22,16 @@ export function switchToEnglishInputMethod(): Promise<boolean> {
   if (switching || now - lastSwitchAt < 300) return Promise.resolve(true);
   switching = true;
   lastSwitchAt = now;
+  const helperPath = getNativeHelperPath();
+  if (!helperPath) {
+    switching = false;
+    return Promise.resolve(false);
+  }
 
   return new Promise((resolve) => {
     execFile(
-      'pwsh',
-      ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', switchToEnglishScript],
+      helperPath,
+      ['--switch-english-input'],
       { windowsHide: true, timeout: 3000 },
       (error) => {
         switching = false;

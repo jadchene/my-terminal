@@ -62,6 +62,16 @@ export function useSessionTreeActions(params: UseSessionTreeActionsParams) {
     showAlert,
   } = params;
 
+  const runMutation = async (action: () => Promise<void>, title: string): Promise<boolean> => {
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      await showAlert(error instanceof Error ? error.message : String(error), title);
+      return false;
+    }
+  };
+
   const openSessionModal = (target?: Session, preferredFolderId?: number | null) => {
     if (target) {
       setEditingSession(target);
@@ -113,9 +123,12 @@ export function useSessionTreeActions(params: UseSessionTreeActionsParams) {
       await showAlert('请填写完整信息');
       return;
     }
-    if (editingSession) await window.terminalApi.updateSession({ id: editingSession.id, ...sessionForm });
-    else await window.terminalApi.createSession(sessionForm);
-    await loadSessionData();
+    const saved = await runMutation(async () => {
+      if (editingSession) await window.terminalApi.updateSession({ id: editingSession.id, ...sessionForm });
+      else await window.terminalApi.createSession(sessionForm);
+      await loadSessionData();
+    }, '保存会话失败');
+    if (!saved) return;
     setSessionFolderMenuOpen(false);
     setShowSessionModal(false);
   };
@@ -125,8 +138,11 @@ export function useSessionTreeActions(params: UseSessionTreeActionsParams) {
       await showAlert('请输入目录名');
       return;
     }
-    await window.terminalApi.createFolder({ name: folderName.trim(), parentId: folderParent });
-    await loadSessionData();
+    const saved = await runMutation(async () => {
+      await window.terminalApi.createFolder({ name: folderName.trim(), parentId: folderParent });
+      await loadSessionData();
+    }, '创建目录失败');
+    if (!saved) return;
     setFolderName('');
     setFolderParent(null);
     setFolderParentMenuOpen(false);
@@ -141,17 +157,19 @@ export function useSessionTreeActions(params: UseSessionTreeActionsParams) {
     }
     const existingNames = new Set(sessions.map((item) => item.name));
     const copiedName = buildCopiedSessionName(target.name, existingNames);
-    await window.terminalApi.createSession({
-      folder_id: target.folder_id,
-      name: copiedName,
-      host: target.host,
-      port: target.port,
-      username: target.username,
-      password: '',
-      remember_password: target.remember_password,
-      default_session: 0,
-    });
-    await loadSessionData();
+    await runMutation(async () => {
+      await window.terminalApi.createSession({
+        folder_id: target.folder_id,
+        name: copiedName,
+        host: target.host,
+        port: target.port,
+        username: target.username,
+        password: '',
+        remember_password: 0,
+        default_session: 0,
+      });
+      await loadSessionData();
+    }, '复制会话失败');
     setTreeMenu(null);
   };
 
@@ -163,8 +181,10 @@ export function useSessionTreeActions(params: UseSessionTreeActionsParams) {
 
   const onDeleteSessionMenu = async (menu: Extract<TreeContextMenu, { type: 'session' }>) => {
     if (!(await askConfirm(`确定删除会话 ${menu.name} 吗？`))) return;
-    await window.terminalApi.deleteSession(menu.id);
-    await loadSessionData();
+    await runMutation(async () => {
+      await window.terminalApi.deleteSession(menu.id);
+      await loadSessionData();
+    }, '删除会话失败');
     setTreeMenu(null);
   };
 
@@ -184,8 +204,10 @@ export function useSessionTreeActions(params: UseSessionTreeActionsParams) {
       setTreeMenu(null);
       return;
     }
-    await window.terminalApi.updateFolder({ id: menu.id, name: name.trim() });
-    await loadSessionData();
+    await runMutation(async () => {
+      await window.terminalApi.updateFolder({ id: menu.id, name: name.trim() });
+      await loadSessionData();
+    }, '重命名目录失败');
     setTreeMenu(null);
   };
 
@@ -195,7 +217,7 @@ export function useSessionTreeActions(params: UseSessionTreeActionsParams) {
       await window.terminalApi.deleteFolder(menu.id);
       await loadSessionData();
     } catch (error) {
-      await showAlert(String(error), '删除失败');
+      await showAlert(error instanceof Error ? error.message : String(error), '删除失败');
     } finally {
       setTreeMenu(null);
     }

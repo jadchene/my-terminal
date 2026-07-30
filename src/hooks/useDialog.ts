@@ -1,13 +1,17 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createSequentialQueue } from '../utils/sequentialQueue';
 
 type DialogType = 'alert' | 'confirm' | 'prompt';
-export type DialogResult = boolean | string | null | void;
+export type PasswordPromptResult = { value: string; remember: boolean };
+export type DialogResult = boolean | string | PasswordPromptResult | null | void;
 export type DialogState = {
   type: DialogType;
   title: string;
   message: string;
   defaultValue?: string;
   inputType?: 'text' | 'password';
+  rememberOption?: { label: string; defaultValue: boolean };
+  requestKey?: string;
 };
 
 export function useDialog() {
@@ -15,40 +19,87 @@ export function useDialog() {
   const [dialogInput, setDialogInput] = useState('');
   const [showDialogPassword, setShowDialogPassword] = useState(false);
   const [capsLockOn, setCapsLockOn] = useState(false);
-  const dialogResolverRef = useRef<((value: DialogResult) => void) | null>(null);
+  const [dialogRemember, setDialogRemember] = useState(false);
+  const dialogQueueRef = useRef(createSequentialQueue<DialogState, DialogResult>());
 
-  const openDialog = useCallback(<T extends DialogResult>(next: DialogState): Promise<T> =>
-    new Promise<T>((resolve) => {
-      dialogResolverRef.current = resolve as (value: DialogResult) => void;
-      setDialogInput(next.defaultValue || '');
-      setShowDialogPassword(false);
-      setDialog(next);
-    }), []);
+  const showDialog = useCallback((next: DialogState) => {
+    setDialogInput(next.defaultValue || '');
+    setShowDialogPassword(false);
+    setCapsLockOn(false);
+    setDialogRemember(next.rememberOption?.defaultValue ?? false);
+    setDialog(next);
+  }, []);
 
-  const closeDialog = useCallback((value: DialogResult) => {
-    const resolver = dialogResolverRef.current;
-    dialogResolverRef.current = null;
+  const clearDialog = useCallback(() => {
     setDialog(null);
+    setDialogInput('');
     setCapsLockOn(false);
     setShowDialogPassword(false);
-    if (resolver) resolver(value);
+    setDialogRemember(false);
+  }, []);
+
+  const openDialog = useCallback(<T extends DialogResult>(next: DialogState): Promise<T> => {
+    const queued = dialogQueueRef.current.enqueue<T>(next);
+    if (queued.activated) showDialog(next);
+    return queued.promise;
+  }, [showDialog]);
+
+  const closeDialog = useCallback((value: DialogResult) => {
+    const next = dialogQueueRef.current.resolveActive(value);
+    if (next) {
+      showDialog(next);
+      return;
+    }
+    clearDialog();
+  }, [clearDialog, showDialog]);
+
+  const cancelDialogRequest = useCallback((requestKey: string, value: DialogResult = null): boolean => {
+    const cancelled = dialogQueueRef.current.cancelWhere((item) => item.requestKey === requestKey, value);
+    if (cancelled.activeCancelled) {
+      if (cancelled.next) showDialog(cancelled.next);
+      else clearDialog();
+    }
+    return cancelled.cancelledCount > 0;
+  }, [clearDialog, showDialog]);
+
+  useEffect(() => () => {
+    dialogQueueRef.current.cancelAll(null);
   }, []);
 
   const askConfirm = useCallback(
-    async (message: string, title = '确认'): Promise<boolean> =>
-      openDialog<boolean>({ type: 'confirm', title, message }),
+    async (message: string, title = '确认', requestKey?: string): Promise<boolean> =>
+      openDialog<boolean>({ type: 'confirm', title, message, requestKey }),
     [openDialog],
   );
 
   const askPrompt = useCallback(
-    async (message: string, defaultValue = '', title = '输入'): Promise<string | null> =>
-      openDialog<string | null>({ type: 'prompt', title, message, defaultValue, inputType: 'text' }),
+    async (message: string, defaultValue = '', title = '输入', requestKey?: string): Promise<string | null> =>
+      openDialog<string | null>({ type: 'prompt', title, message, defaultValue, inputType: 'text', requestKey }),
     [openDialog],
   );
 
   const askPassword = useCallback(
-    async (message: string, title = '输入密码'): Promise<string | null> =>
-      openDialog<string | null>({ type: 'prompt', title, message, defaultValue: '', inputType: 'password' }),
+    async (message: string, title = '输入密码', requestKey?: string): Promise<string | null> =>
+      openDialog<string | null>({ type: 'prompt', title, message, defaultValue: '', inputType: 'password', requestKey }),
+    [openDialog],
+  );
+
+  const askPasswordWithRemember = useCallback(
+    async (
+      message: string,
+      remember: boolean,
+      title = '输入密码',
+      requestKey?: string,
+    ): Promise<PasswordPromptResult | null> =>
+      openDialog<PasswordPromptResult | null>({
+        type: 'prompt',
+        title,
+        message,
+        defaultValue: '',
+        inputType: 'password',
+        rememberOption: { label: '记住密码', defaultValue: remember },
+        requestKey,
+      }),
     [openDialog],
   );
 
@@ -61,13 +112,17 @@ export function useDialog() {
     dialogInput,
     showDialogPassword,
     capsLockOn,
+    dialogRemember,
     setDialogInput,
     setShowDialogPassword,
     setCapsLockOn,
+    setDialogRemember,
     closeDialog,
+    cancelDialogRequest,
     askConfirm,
     askPrompt,
     askPassword,
+    askPasswordWithRemember,
     showAlert,
   };
 }

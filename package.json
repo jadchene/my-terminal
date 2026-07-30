@@ -6,13 +6,16 @@
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
-    "dev:electron": "npm run build:electron && wait-on tcp:5173 && electron dist-electron/electron/main.js",
+    "dev:electron": "npm run build:electron && wait-on tcp:5173 && electron dist-electron/electron/main.js --renderer-url=http://localhost:5173",
     "build": "vite build && npm run build:electron",
     "build:electron": "tsc -p tsconfig.electron.json && node scripts/build-native-drag-helper.cjs",
     "pack:unpacked": "npm run build && electron-builder --dir --win",
     "postpack:unpacked": "node -e \"const fs=require('fs');const path=require('path');const src=path.join('release','win-unpacked');const dst=path.join('release','my-terminal');if(fs.existsSync(dst)) fs.rmSync(dst,{recursive:true,force:true});if(fs.existsSync(src)) fs.renameSync(src,dst);\"",
     "preview": "vite preview",
-    "start": "npm run build:electron && electron dist-electron/electron/main.js"
+    "start": "npm run build && electron dist-electron/electron/main.js",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.electron.json --noEmit",
+    "test": "tsx --test tests/**/*.test.ts",
+    "verify": "npm run typecheck && npm run test && npm run build"
   },
   "keywords": [
     "ssh",
@@ -40,7 +43,13 @@
       "dist/**/*",
       "dist-electron/**/*",
       "electron/preload.js",
-      "package.json"
+      "package.json",
+      "!node_modules/sqlite3/{deps,src,build-tmp}/**/*",
+      "!node_modules/sqlite3/**/*.{cc,h,md}"
+    ],
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
     ],
     "asarUnpack": [
       "dist-electron/native/**/*"
@@ -52,29 +61,47 @@
   "type": "commonjs",
   "dependencies": {
     "keytar": "^7.9.0",
-    "lucide-react": "^1.8.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
     "sqlite3": "^6.0.1",
     "ssh2": "^1.17.0",
-    "ssh2-sftp-client": "^12.1.1",
-    "systeminformation": "^5.31.5",
-    "xterm": "^5.3.0",
-    "xterm-addon-fit": "^0.8.0",
-    "xterm-addon-web-links": "^0.9.0"
+    "ssh2-sftp-client": "^12.1.1"
   },
   "devDependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/ssh2": "^1.15.5",
     "@vitejs/plugin-react": "^6.0.1",
-    "concurrently": "^9.2.1",
+    "concurrently": "^10.0.4",
     "electron": "^41.2.0",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^26.15.3",
+    "lucide-react": "^1.8.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
-    "vite": "^8.0.8",
+    "vite": "^8.1.5",
     "wait-on": "^9.0.5"
+  },
+  "overrides": {
+    "axios": "1.18.1",
+    "esbuild": "0.28.1",
+    "form-data": "4.0.6",
+    "ip-address": "10.3.1",
+    "joi": "18.2.1",
+    "minimatch@10.2.5": {
+      "brace-expansion": "5.0.8"
+    },
+    "tar": "7.5.22"
+  },
+  "allowScripts": {
+    "electron@41.2.0": true,
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.28.1": true,
+    "keytar@7.9.0": true,
+    "sqlite3@6.0.1": true,
+    "ssh2@1.17.0": true
   }
 }

@@ -10,11 +10,14 @@ import { userDataPath } from './main/env';
 import { db, all, initStorage } from './main/db';
 import { sshStateMap, sftpMap, sftpBatchControlMap, connectionSessionMap, connectionHomeMap, cwdOutputTailMap, lastKnownCwdMap, remoteMetricsSnapshotMap, remoteMetricsPayloadMap, sharedState } from './main/state';
 import { subscribeMetrics } from './main/metrics';
-import { createWindow } from './main/window';
+import { createWindow, flushWindowState } from './main/window';
 import { registerIpc } from './main/ipc';
 import { readSettings } from './main/settings';
 import { applySingleInstancePreference } from './main/singleInstance';
 import { cancelAllNativeFileDrags } from './main/nativeFileDrag';
+import { cancelPendingHostKeyRequests } from './main/hostKey';
+import { cancelPendingAuthChallenges } from './main/authChallenge';
+import { cancelAllPendingConnectionAttempts } from './main/connectionAttempt';
 
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
@@ -48,11 +51,32 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', async () => {
-  cancelAllNativeFileDrags();
-  if (sharedState.metricsTimer) clearInterval(sharedState.metricsTimer);
+let gracefulQuitStarted = false;
+let gracefulQuitFinished = false;
 
-  for (const [, state] of sshStateMap) state.client.end();
+async function cleanupBeforeQuit() {
+  flushWindowState(sharedState.mainWindow);
+  cancelAllNativeFileDrags();
+  cancelPendingHostKeyRequests();
+  cancelPendingAuthChallenges();
+  cancelAllPendingConnectionAttempts();
+  if (sharedState.metricsTimer) clearInterval(sharedState.metricsTimer);
+  sharedState.metricsTimer = null;
+  const clientsToClose = new Set<any>();
+  for (const [, control] of sftpBatchControlMap) {
+    control.cancelled = true;
+    if (control.client) clientsToClose.add(control.client);
+    for (const client of control.clients || []) clientsToClose.add(client);
+  }
+  for (const [, sftp] of sftpMap) clientsToClose.add(sftp);
+  await Promise.all(Array.from(clientsToClose, async (client) => client.end().catch(() => undefined)));
+  for (const [, state] of sshStateMap) {
+    try {
+      state.client.end();
+    } catch {
+      // Ignore connection shutdown errors.
+    }
+  }
   sshStateMap.clear();
   connectionSessionMap.clear();
   connectionHomeMap.clear();
@@ -60,8 +84,21 @@ app.on('before-quit', async () => {
   lastKnownCwdMap.clear();
   remoteMetricsPayloadMap.clear();
   remoteMetricsSnapshotMap.clear();
-  for (const [, sftp] of sftpMap) await sftp.end();
   sftpMap.clear();
   sftpBatchControlMap.clear();
-  db.close();
+  await new Promise<void>((resolve) => db.close(() => resolve()));
+}
+
+app.on('before-quit', (event) => {
+  if (gracefulQuitFinished) return;
+  event.preventDefault();
+  if (gracefulQuitStarted) return;
+  gracefulQuitStarted = true;
+  void Promise.race([
+    cleanupBeforeQuit(),
+    new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+  ]).finally(() => {
+    gracefulQuitFinished = true;
+    app.quit();
+  });
 });

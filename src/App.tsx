@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import 'xterm/css/xterm.css';
+import '@xterm/xterm/css/xterm.css';
 import type {
   Folder,
   Metrics,
@@ -25,6 +25,7 @@ import { useSessionTreeActions } from './hooks/useSessionTreeActions';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { useSettingsActions } from './hooks/useSettingsActions';
 import { useWindowActions } from './hooks/useWindowActions';
+import { formatSftpError, isSilentSftpError } from './utils/sftpError';
 import { formatSftpMeta } from './utils/sftpFormat';
 
 type SessionForm = Omit<Session, 'id'>;
@@ -50,6 +51,8 @@ function isAuthError(message: string): boolean {
     text.includes('auth fail')
   );
 }
+
+const isHostKeyMismatchError = (message: string): boolean => message.includes('SSH_HOST_KEY_MISMATCH');
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -99,20 +102,89 @@ export default function App() {
   const tabsRef = useRef<Tab[]>([]);
   const sessionsRef = useRef<Session[]>([]);
   const settingsRef = useRef<Settings | null>(null);
+  const expiredAuthRequestIdsRef = useRef<Set<string>>(new Set());
   const {
     dialog,
     dialogInput,
     showDialogPassword,
     capsLockOn,
+    dialogRemember,
     setDialogInput,
     setShowDialogPassword,
     setCapsLockOn,
+    setDialogRemember,
     closeDialog,
+    cancelDialogRequest,
     askConfirm,
     askPrompt,
     askPassword,
+    askPasswordWithRemember,
     showAlert,
   } = useDialog();
+
+  useEffect(() => {
+    const unsubscribeHostKey = window.terminalApi.onSshHostKeyVerification((event) => {
+      void (async () => {
+        const requestKey = `ssh-host-key:${event.requestId}`;
+        const accepted = await askConfirm(
+          `首次连接到 ${event.host}:${event.port}。\n\n` +
+            `会话: ${event.name}\n算法: ${event.algorithm}\n指纹: ${event.fingerprint}\n\n` +
+            '请通过可信渠道核对指纹。确认后将保存此主机密钥。',
+          '确认 SSH 主机指纹',
+          requestKey,
+        ).catch(() => false);
+        await window.terminalApi.resolveSshHostKeyVerification(event.requestId, accepted).catch(() => false);
+      })();
+    });
+    const unsubscribeHostKeyExpired = window.terminalApi.onSshHostKeyVerificationExpired(({ requestId }) => {
+      cancelDialogRequest(`ssh-host-key:${requestId}`, false);
+    });
+    const unsubscribeHostKeyMismatch = window.terminalApi.onSshHostKeyMismatch((event) => {
+      void showAlert(
+        `已阻止连接到 ${event.host}:${event.port}。\n\n` +
+          `保存的指纹: ${event.expectedFingerprint}\n当前指纹: ${event.actualFingerprint}\n\n` +
+          '服务器主机密钥发生变化。请先确认服务器是否重装或存在网络劫持。',
+        'SSH 主机指纹不匹配',
+      );
+    });
+    const unsubscribeAuthChallenge = window.terminalApi.onSshAuthChallenge((event) => {
+      void (async () => {
+        const requestKey = `ssh-auth:${event.requestId}`;
+        try {
+          const answers: string[] = [];
+          for (const prompt of event.prompts) {
+            if (expiredAuthRequestIdsRef.current.has(event.requestId)) return;
+            const answer = prompt.echo
+              ? await askPrompt(prompt.prompt || '认证信息', '', `${event.sessionName} 交互认证`, requestKey)
+              : await askPassword(prompt.prompt || '认证信息', `${event.sessionName} 交互认证`, requestKey);
+            if (answer == null) {
+              if (!expiredAuthRequestIdsRef.current.has(event.requestId)) {
+                await window.terminalApi.resolveSshAuthChallenge(event.requestId, null).catch(() => false);
+              }
+              return;
+            }
+            answers.push(answer);
+          }
+          if (!expiredAuthRequestIdsRef.current.has(event.requestId)) {
+            await window.terminalApi.resolveSshAuthChallenge(event.requestId, answers).catch(() => false);
+          }
+        } finally {
+          expiredAuthRequestIdsRef.current.delete(event.requestId);
+        }
+      })();
+    });
+    const unsubscribeAuthChallengeExpired = window.terminalApi.onSshAuthChallengeExpired(({ requestId }) => {
+      expiredAuthRequestIdsRef.current.add(requestId);
+      cancelDialogRequest(`ssh-auth:${requestId}`, null);
+    });
+    return () => {
+      unsubscribeHostKey();
+      unsubscribeHostKeyExpired();
+      unsubscribeHostKeyMismatch();
+      unsubscribeAuthChallenge();
+      unsubscribeAuthChallengeExpired();
+    };
+  }, [askConfirm, askPassword, askPrompt, cancelDialogRequest, showAlert]);
   const {
     transferRows,
     updateTransferRow,
@@ -138,6 +210,7 @@ export default function App() {
     focusTerminalInput,
     getPausedByScroll,
     attachTerminal,
+    disposeTerminal,
     setReconnectHandler,
     isAtBottom,
   } = useTerminalRuntime({
@@ -168,6 +241,9 @@ export default function App() {
     refreshSftp,
     setSftpSelection,
     navigateSftp,
+    getCurrentSftpLocation,
+    hasSftpSessionState,
+    clearSftpSessionState,
     clearSftpSelectionNow,
     clearSftpSelection,
     clearSftpItems,
@@ -203,7 +279,7 @@ export default function App() {
     fitTerminalStabilized,
   });
 
-  const { loadSessionData } = useAppBootstrap({
+  const { loadSessionData, bootstrapError, retryBootstrap } = useAppBootstrap({
     activeSessionIdRef,
     setSettings,
     setRuntimeInfo,
@@ -242,17 +318,37 @@ export default function App() {
     disconnectedByTabRef,
     reconnectingTabRef,
     attachTerminal,
+    disposeTerminal,
+    clearSftpSessionState,
     setPausedOutput,
     onReconnectActiveSession: async (tabId) => {
-      const home = await window.terminalApi.sftpGetHome(tabId).catch(() => '~');
-      const target = home?.trim() || '~';
-      setSftpPath(target);
+      if (hasSftpSessionState(tabId)) {
+        try {
+          if (await refreshSftp()) return;
+        } catch {
+          // Fall back to the remote home directory below.
+        }
+      }
+      let target = '~';
+      try {
+        const home = await window.terminalApi.sftpGetHome(tabId);
+        target = home?.trim() || '~';
+      } catch (error) {
+        if (isSilentSftpError(error)) return;
+      }
       clearSftpSelection();
-      await refreshSftp(target).catch(() => undefined);
+      try {
+        const accepted = await refreshSftp(target);
+        if (accepted) setSftpPath(target);
+      } catch (error) {
+        if (!isSilentSftpError(error)) await showAlert(formatSftpError(error), 'SFTP');
+      }
     },
-    askPassword,
+    askPasswordWithRemember,
+    cancelDialogRequest,
     showAlert,
     isAuthError,
+    isHostKeyMismatchError,
   });
 
   useEffect(() => {
@@ -280,7 +376,9 @@ export default function App() {
     clearSftpSelection,
     sftpPath,
     clearSftpItems,
+    hasSftpSessionState,
     refreshSftp,
+    showAlert,
   });
 
   useOverlayClose({
@@ -311,6 +409,7 @@ export default function App() {
     sftpInternalDragRef,
     refreshSftp,
     navigateSftp,
+    getCurrentSftpLocation,
     clearSftpSelectionNow,
     getLocalPathsFromDrop,
     submitSftpPath,
@@ -353,6 +452,7 @@ export default function App() {
     setSettingsTab,
     setCursorStyleMenuOpen,
     setMenuOpen,
+    showAlert,
   });
 
   const windowActions = useWindowActions({
@@ -360,9 +460,23 @@ export default function App() {
     setMenuOpen,
   });
 
-  if (!settings) return <div className="loading">加载中...</div>;
+  if (!settings) {
+    return (
+      <div className="loading">
+        <div className="loading-content">
+          <div>{bootstrapError ? '应用初始化失败' : '加载中...'}</div>
+          {bootstrapError && (
+            <>
+              <div className="loading-error">{bootstrapError}</div>
+              <button type="button" onClick={() => void retryBootstrap()}>重试</button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
-  const currentMetrics = (activeSessionId ? metricsBySession[activeSessionId] : null) ?? metrics;
+  const currentMetrics = activeSessionId ? (metricsBySession[activeSessionId] ?? null) : metrics;
   const currentTransferRows = activeSessionId ? transferRows.filter((it) => it.sessionId === activeSessionId) : [];
 
   return (
@@ -434,6 +548,7 @@ export default function App() {
           activeSessionId={activeSessionId}
           pausedOutput={pausedOutput}
           settings={settings}
+          showAlert={showAlert}
           terminalContainerRef={terminalContainerRef}
           terminalMapRef={terminalMapRef}
           syncPauseStateWithViewport={syncPauseStateWithViewport}
@@ -471,9 +586,11 @@ export default function App() {
         dialogInput={dialogInput}
         showDialogPassword={showDialogPassword}
         capsLockOn={capsLockOn}
+        dialogRemember={dialogRemember}
         setDialogInput={setDialogInput}
         setShowDialogPassword={setShowDialogPassword}
         setCapsLockOn={setCapsLockOn}
+        setDialogRemember={setDialogRemember}
         closeDialog={closeDialog}
         sessionTreeActions={sessionTreeActions}
         settingsActions={settingsActions}

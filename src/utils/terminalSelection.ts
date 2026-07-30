@@ -1,4 +1,4 @@
-import type { Terminal } from 'xterm';
+import type { Terminal } from '@xterm/xterm';
 
 const NON_BREAKING_SPACE_REGEX = /\u00a0/g;
 
