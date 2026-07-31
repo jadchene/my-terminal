@@ -228,6 +228,7 @@ async function transferRequestedItem(state: NativeDragState, itemIndex: number):
         direction: 'download',
         index: transferIndex,
         totalCount: fileEntries.length,
+        completedCount: state.successCount + state.failedCount,
         name: item.name.replace(/\\/g, '/'),
         transferred: 0,
         total: item.size,
@@ -243,6 +244,7 @@ async function transferRequestedItem(state: NativeDragState, itemIndex: number):
           direction: 'download',
           index: transferIndex,
           totalCount: fileEntries.length,
+          completedCount: state.successCount + state.failedCount,
           name: item.name.replace(/\\/g, '/'),
           transferred,
           total: total || item.size,
@@ -258,6 +260,7 @@ async function transferRequestedItem(state: NativeDragState, itemIndex: number):
         direction: 'download',
         index: transferIndex,
         totalCount: fileEntries.length,
+        completedCount: state.successCount + state.failedCount,
         name: item.name.replace(/\\/g, '/'),
         transferred: item.size,
         total: item.size,
@@ -275,6 +278,20 @@ async function transferRequestedItem(state: NativeDragState, itemIndex: number):
       name: item.name.replace(/\\/g, '/'),
       error: message,
     });
+    emitSftpProgressMaybe(
+      {
+        sessionId: state.sessionId,
+        batchId: state.batchId,
+        direction: 'download',
+        index: transferIndex,
+        totalCount: fileEntries.length,
+        completedCount: state.successCount + state.failedCount,
+        name: item.name.replace(/\\/g, '/'),
+        transferred: 0,
+        total: item.size,
+      },
+      true,
+    );
     sendHelperLine(state, `ERROR\t${itemIndex}\t${Buffer.from(message).toString('base64')}`);
   }
 }
@@ -436,6 +453,7 @@ async function stageDirectoryDrag(
         direction: 'download',
         index: 0,
         totalCount: 0,
+        completedCount: 0,
         name: '准备拖拽目录',
         transferred: 0,
         total: 0,
@@ -478,6 +496,7 @@ async function stageDirectoryDrag(
           direction: 'download',
           index,
           totalCount: fileEntries.length,
+          completedCount: state.successCount + state.failedCount,
           name: entry.name.replace(/\\/g, '/'),
           transferred: 0,
           total: entry.size,
@@ -494,6 +513,7 @@ async function stageDirectoryDrag(
               direction: 'download',
               index,
               totalCount: fileEntries.length,
+              completedCount: state.successCount + state.failedCount,
               name: entry.name.replace(/\\/g, '/'),
               transferred,
               total: total || entry.size,
@@ -509,6 +529,20 @@ async function stageDirectoryDrag(
           name: entry.name.replace(/\\/g, '/'),
           error: String(error),
         });
+        emitSftpProgressMaybe(
+          {
+            sessionId: state.sessionId,
+            batchId: state.batchId,
+            direction: 'download',
+            index,
+            totalCount: fileEntries.length,
+            completedCount: state.successCount + state.failedCount,
+            name: entry.name.replace(/\\/g, '/'),
+            transferred: 0,
+            total: entry.size,
+          },
+          true,
+        );
         throw error;
       }
       state.successCount += 1;
@@ -519,6 +553,7 @@ async function stageDirectoryDrag(
           direction: 'download',
           index,
           totalCount: fileEntries.length,
+          completedCount: state.successCount + state.failedCount,
           name: entry.name.replace(/\\/g, '/'),
           transferred: entry.size,
           total: entry.size,

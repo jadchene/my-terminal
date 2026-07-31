@@ -58,6 +58,7 @@ export type SftpProgressPayload = {
   direction: 'upload' | 'download';
   index: number;
   totalCount: number;
+  completedCount: number;
   name: string;
   transferred: number;
   total: number;

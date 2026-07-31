@@ -9,6 +9,7 @@ type TransferRow = {
   direction: 'upload' | 'download';
   index: number;
   totalCount: number;
+  completedCount: number;
   name: string;
   percent: number;
   transferred: number;

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import type { SftpTransferBatchResult, SftpTransferError, SftpTransferProgress } from '../types';
 import { formatSftpError } from '../utils/sftpError';
+import { calculateSftpTransferPercent } from '../utils/sftpTransferProgress';
 
 export type TransferRow = {
   key: string;
@@ -9,6 +10,7 @@ export type TransferRow = {
   direction: 'upload' | 'download';
   index: number;
   totalCount: number;
+  completedCount: number;
   name: string;
   percent: number;
   transferred: number;
@@ -34,7 +36,7 @@ export function useTransferQueue(params: UseTransferQueueParams) {
     const batchKey = `${event.sessionId}:${event.batchId}`;
     if (cancelledTransferBatchRef.current.has(batchKey)) return;
     const key = `session-${event.sessionId}`;
-    const percent = event.total > 0 ? Math.min(100, Number(((event.transferred / event.total) * 100).toFixed(1))) : 0;
+    const percent = calculateSftpTransferPercent(event);
     setTransferRows((prev) => {
       const found = prev.find((it) => it.key === key);
       if (found) {
@@ -46,6 +48,7 @@ export function useTransferQueue(params: UseTransferQueueParams) {
                 name: event.name,
                 index: event.index,
                 totalCount: event.totalCount,
+                completedCount: event.completedCount,
                 percent,
                 transferred: event.transferred,
                 total: event.total,
@@ -62,6 +65,7 @@ export function useTransferQueue(params: UseTransferQueueParams) {
         direction: event.direction,
         index: event.index,
         totalCount: event.totalCount,
+        completedCount: event.completedCount,
         name: event.name,
         percent,
         transferred: event.transferred,

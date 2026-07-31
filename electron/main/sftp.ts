@@ -9,10 +9,11 @@ import keytar from 'keytar';
 import { Session, SftpProgressPayload, SftpBatchControl, UploadTask, DownloadTask } from './types';
 import { all, get } from './db';
 import { readSettings } from './settings';
-import { sftpMap, sftpBatchControlMap, sftpProgressThrottleMap, DEFAULT_TRANSFER_CONCURRENCY, connectionHomeMap } from './state';
+import { sshStateMap, sftpMap, sftpBatchControlMap, sftpProgressThrottleMap, DEFAULT_TRANSFER_CONCURRENCY, connectionHomeMap } from './state';
 import { getSessionForConnection, requireConnected } from './session';
 import { safeSend } from './window';
 import { createHostVerifier } from './hostKey';
+import { createSftpTransferChannel } from './sftpChannel';
 import {
   allocateUniqueLocalPath,
   createTemporaryDownloadPath,
@@ -128,6 +129,7 @@ export function isHandshakeLossError(error: unknown): boolean {
 }
 
 export async function createWorkerSftpClients(
+  connectionId: number,
   session: Session,
   desired: number,
   onDegrade?: (actual: number, desiredTotal: number) => void,
@@ -137,14 +139,23 @@ export async function createWorkerSftpClients(
   const clients: any[] = [];
   for (let i = 0; i < target; i += 1) {
     try {
-      const client = await createStandaloneSftp(session);
+      const transport = sshStateMap.get(connectionId)?.client;
+      const client = transport
+        ? await createSftpTransferChannel(transport)
+        : await createStandaloneSftp(session);
       clients.push(client);
     } catch (error) {
-      onDegrade?.(clients.length, target);
-      if (clients.length === 0 && !isHandshakeLossError(error)) {
-        console.warn('[SFTP] Additional worker connection unavailable:', error);
+      try {
+        const fallbackClient = await createStandaloneSftp(session);
+        clients.push(fallbackClient);
+        console.warn('[SFTP] Shared transport channel unavailable; using a standalone worker connection:', error);
+      } catch (fallbackError) {
+        onDegrade?.(clients.length, target);
+        if (clients.length === 0 && !isHandshakeLossError(fallbackError)) {
+          console.warn('[SFTP] Additional worker unavailable:', fallbackError);
+        }
+        break;
       }
-      break;
     }
   }
   return clients;
@@ -416,6 +427,7 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
       direction: 'upload',
       index: 0,
       totalCount: 0,
+      completedCount: 0,
       name: '准备中',
       transferred: 0,
       total: 0,
@@ -425,6 +437,7 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
   const tasks: UploadTask[] = [];
   let successCount = 0;
   let failedCount = 0;
+  let completedCount = 0;
   try {
     for (const localPath of payload.localPaths) {
       assertBatchNotCancelled(control);
@@ -439,6 +452,7 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
         direction: 'upload',
         index: 0,
         totalCount: tasks.length,
+        completedCount,
         name: tasks[0].name,
         transferred: 0,
         total: tasks[0].size || 0,
@@ -448,7 +462,7 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
       await ensureRemoteDirsForUploadTasks(client, tasks);
     }
     const concurrency = Math.max(1, Math.min(DEFAULT_TRANSFER_CONCURRENCY, tasks.length || 1));
-    const extraClients = await createWorkerSftpClients(session, concurrency - 1, (actual, desired) => {
+    const extraClients = await createWorkerSftpClients(connectionId, session, concurrency - 1, (actual, desired) => {
       console.warn(`[SFTP] Upload concurrency degraded: ${actual + 1}/${desired + 1}`);
     });
     const workerClients = [client, ...extraClients];
@@ -467,6 +481,7 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
               direction: 'upload',
               index,
               totalCount: tasks.length,
+              completedCount,
               name: task.name,
               transferred,
               total: total || task.size || 0,
@@ -475,6 +490,7 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
         });
         assertBatchNotCancelled(control);
         successCount += 1;
+        completedCount += 1;
         emitSftpProgressMaybe(
           {
             sessionId: payload.sessionId,
@@ -482,6 +498,7 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
             direction: 'upload',
             index,
             totalCount: tasks.length,
+            completedCount,
             name: task.name,
             transferred: task.size,
             total: task.size,
@@ -491,6 +508,7 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
       } catch (error) {
         if (isBatchCancelledError(error) || control.cancelled) return;
         failedCount += 1;
+        completedCount += 1;
         emitSftpBatchError({
           sessionId: payload.sessionId,
           batchId,
@@ -498,6 +516,20 @@ export async function runSftpUploadBatch(payload: { sessionId: number; remoteDir
           name: task.name,
           error: `fastPut 失败: ${String(error)}`,
         });
+        emitSftpProgressMaybe(
+          {
+            sessionId: payload.sessionId,
+            batchId,
+            direction: 'upload',
+            index,
+            totalCount: tasks.length,
+            completedCount,
+            name: task.name,
+            transferred: 0,
+            total: task.size,
+          },
+          true,
+        );
       }
     });
   } catch (error) {
@@ -564,8 +596,9 @@ export async function runSftpDownloadBatch(payload: { sessionId: number; remoteP
       sessionId: payload.sessionId,
       batchId,
       direction: 'download',
-    index: 0,
-    totalCount: 0,
+      index: 0,
+      totalCount: 0,
+      completedCount: 0,
       name: '准备中',
       transferred: 0,
       total: 0,
@@ -577,6 +610,7 @@ export async function runSftpDownloadBatch(payload: { sessionId: number; remoteP
   const reservedPaths = new Set<string>();
   let successCount = 0;
   let failedCount = 0;
+  let completedCount = 0;
   try {
     for (const rawPath of payload.remotePaths) {
       assertBatchNotCancelled(control);
@@ -599,20 +633,21 @@ export async function runSftpDownloadBatch(payload: { sessionId: number; remoteP
     if (tasks.length > 0) {
       emitSftpProgressMaybe(
         {
-        sessionId: payload.sessionId,
-        batchId,
-        direction: 'download',
-        index: 0,
-        totalCount: tasks.length,
-        name: tasks[0].name,
-        transferred: 0,
-        total: tasks[0].size || 0,
+          sessionId: payload.sessionId,
+          batchId,
+          direction: 'download',
+          index: 0,
+          totalCount: tasks.length,
+          completedCount,
+          name: tasks[0].name,
+          transferred: 0,
+          total: tasks[0].size || 0,
         },
         true,
       );
     }
     const concurrency = Math.max(1, Math.min(DEFAULT_TRANSFER_CONCURRENCY, tasks.length || 1));
-    const extraClients = await createWorkerSftpClients(session, concurrency - 1, (actual, desired) => {
+    const extraClients = await createWorkerSftpClients(connectionId, session, concurrency - 1, (actual, desired) => {
       console.warn(`[SFTP] Download concurrency degraded: ${actual + 1}/${desired + 1}`);
     });
     const workerClients = [client, ...extraClients];
@@ -633,6 +668,7 @@ export async function runSftpDownloadBatch(payload: { sessionId: number; remoteP
               direction: 'download',
               index,
               totalCount: tasks.length,
+              completedCount,
               name: task.name,
               transferred,
               total: total || task.size,
@@ -650,6 +686,7 @@ export async function runSftpDownloadBatch(payload: { sessionId: number; remoteP
         await fs.promises.rename(temporaryPath, finalPath);
         task.localPath = finalPath;
         successCount += 1;
+        completedCount += 1;
         emitSftpProgressMaybe(
           {
             sessionId: payload.sessionId,
@@ -657,6 +694,7 @@ export async function runSftpDownloadBatch(payload: { sessionId: number; remoteP
             direction: 'download',
             index,
             totalCount: tasks.length,
+            completedCount,
             name: task.name,
             transferred: task.size,
             total: task.size,
@@ -667,6 +705,7 @@ export async function runSftpDownloadBatch(payload: { sessionId: number; remoteP
         await fs.promises.rm(temporaryPath, { force: true }).catch(() => undefined);
         if (isBatchCancelledError(error) || control.cancelled) return;
         failedCount += 1;
+        completedCount += 1;
         emitSftpBatchError({
           sessionId: payload.sessionId,
           batchId,
@@ -674,6 +713,20 @@ export async function runSftpDownloadBatch(payload: { sessionId: number; remoteP
           name: task.name,
           error: String(error),
         });
+        emitSftpProgressMaybe(
+          {
+            sessionId: payload.sessionId,
+            batchId,
+            direction: 'download',
+            index,
+            totalCount: tasks.length,
+            completedCount,
+            name: task.name,
+            transferred: 0,
+            total: task.size,
+          },
+          true,
+        );
       }
     });
   } catch (error) {

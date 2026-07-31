@@ -5,6 +5,7 @@ type TransferRow = {
   direction: 'upload' | 'download';
   index: number;
   totalCount: number;
+  completedCount: number;
   name: string;
   percent: number;
   transferred: number;
@@ -22,16 +23,28 @@ export function TransferList({ rows, onCancel }: TransferListProps) {
   return (
     <div className="transfer-list">
       {rows.map((row) => (
-        <div key={row.key} className={`transfer-row transfer-${row.status}`} title={row.name}>
+        <div
+          key={row.key}
+          className={`transfer-row transfer-${row.status}`}
+          title={row.totalCount > 1 ? `已完成 ${row.completedCount}/${row.totalCount}` : row.name}
+        >
           <div className="transfer-title">
             <span>{row.direction === 'upload' ? '上传' : '下载'}</span>
-            <span>{row.totalCount === 0 || row.name.includes('正在统计文件数量') ? '准备中' : row.name}</span>
+            <span>
+              {row.totalCount === 0 || row.name.includes('正在统计文件数量')
+                ? '准备中'
+                : row.totalCount > 1
+                  ? `共 ${row.totalCount} 项`
+                  : row.name}
+            </span>
             <span>{row.percent.toFixed(0)}%</span>
           </div>
           <div className="transfer-meta-row">
             <div className="transfer-meta">
-              {row.totalCount > 0
-                ? `共 ${row.totalCount} 项，当前 ${Math.min(row.index + 1, row.totalCount)}/${row.totalCount}`
+              {row.totalCount > 1
+                ? `已完成 ${Math.min(row.completedCount, row.totalCount)}/${row.totalCount}`
+                : row.totalCount === 1
+                  ? '当前 1/1'
                 : '正在统计文件数量...'}
             </div>
             <button
