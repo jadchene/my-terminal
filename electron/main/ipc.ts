@@ -401,6 +401,9 @@ export function registerIpc() {
     state.shell.write(payload.input);
     return true;
   };
+  ipcMain.on('ssh:input', (_, payload: { sessionId: number; input: string }) => {
+    writeSshInput(payload);
+  });
   ipcMain.handle('ssh:send', async (_, payload: { sessionId: number; input: string }) => {
     return writeSshInput(payload);
   });

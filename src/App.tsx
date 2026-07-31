@@ -216,7 +216,7 @@ export default function App() {
   } = useTerminalRuntime({
     activeSessionIdRef,
     disconnectedByTabRef,
-    sendInput: window.terminalApi.sshSend,
+    sendInput: window.terminalApi.sshSendInput,
     resizePty: window.terminalApi.sshResize,
   });
 

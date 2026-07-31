@@ -9,20 +9,16 @@ import { getTerminalSelectionText } from '../utils/terminalSelection';
 import { appendBoundedUtf8, materializeBoundedUtf8, type BoundedText } from '../utils/boundedText';
 import { disposeTerminalResources } from '../utils/terminalResourceCleanup';
 import { mountTerminal } from '../utils/terminalMount';
+import { canWriteTerminalOutputImmediately } from '../utils/terminalOutput';
 
 const MAX_TERMINAL_WRITE_CHUNK = 64 * 1024;
-const IMMEDIATE_TERMINAL_WRITE_CHUNK = 2 * 1024;
 const MAX_PAUSED_OUTPUT_BYTES = 8 * 1024 * 1024;
 const TRUNCATED_OUTPUT_NOTICE = '\r\n\x1b[33m[暂停期间输出超过 8 MiB，已丢弃最旧内容]\x1b[0m\r\n';
-
-function canWriteImmediately(data: string): boolean {
-  return data.length <= IMMEDIATE_TERMINAL_WRITE_CHUNK && !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(data);
-}
 
 type UseTerminalRuntimeParams = {
   activeSessionIdRef: MutableRefObject<number | null>;
   disconnectedByTabRef: MutableRefObject<Map<number, boolean>>;
-  sendInput: (payload: { sessionId: number; input: string }) => Promise<boolean>;
+  sendInput: (payload: { sessionId: number; input: string }) => void;
   resizePty: (payload: { sessionId: number; cols: number; rows: number }) => Promise<boolean>;
 };
 
@@ -58,9 +54,11 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     const input = pendingInputRef.current.get(sessionId);
     if (!input) return;
     pendingInputRef.current.delete(sessionId);
-    void Promise.resolve(sendInput({ sessionId, input })).catch((error) => {
+    try {
+      sendInput({ sessionId, input });
+    } catch (error) {
       console.warn('[Terminal] Failed to send input:', error);
-    });
+    }
   }, [sendInput]);
 
   const queueInput = useCallback((sessionId: number, input: string, flushNow = false) => {
@@ -113,7 +111,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     const target = term ?? terminalMapRef.current.get(sessionId);
     if (!target || !data) return;
     if (
-      canWriteImmediately(data) &&
+      canWriteTerminalOutputImmediately(data) &&
       !pendingWriteRef.current.has(sessionId) &&
       !pendingWriteFrameRef.current.has(sessionId)
     ) {

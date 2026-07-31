@@ -173,6 +173,7 @@ declare global {
       deleteSession: (sessionId: number) => Promise<boolean>;
 
       sshConnect: (payload: { sessionId: number; connectionId?: number; password?: string; savePassword?: boolean } | number) => Promise<boolean>;
+      sshSendInput: (payload: { sessionId: number; input: string }) => void;
       sshSend: (payload: { sessionId: number; input: string }) => Promise<boolean>;
       sshResize: (payload: { sessionId: number; cols: number; rows: number }) => Promise<boolean>;
       sshDisconnect: (sessionId: number) => Promise<boolean>;
