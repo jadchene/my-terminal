@@ -102,6 +102,7 @@ export function createWindow() {
     y: hasVisibleSavedPosition ? savedState?.y : undefined,
     frame: false,
     backgroundColor: '#000000',
+    icon: path.join(appRoot, 'assets', 'app-icon.png'),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

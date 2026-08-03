@@ -281,8 +281,9 @@ body,
   cursor: pointer;
 }
 
-.active-tab-icon {
-  outline: 1px solid #ffffff;
+.sidebar-tabs button.active-tab-icon {
+  border-color: #ffffff;
+  outline: none;
 }
 
 .panel-head {

@@ -4,6 +4,7 @@
   "description": "Local Electron SSH terminal with SFTP file management and remote system metrics.",
   "main": "dist-electron/electron/main.js",
   "scripts": {
+    "generate:icons": "pwsh -NoProfile -File scripts/generate-app-icon.ps1",
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
     "dev:electron": "npm run build:electron && wait-on tcp:5173 && electron dist-electron/electron/main.js --renderer-url=http://localhost:5173",
@@ -43,6 +44,7 @@
       "dist/**/*",
       "dist-electron/**/*",
       "electron/preload.js",
+      "assets/**/*",
       "package.json",
       "!node_modules/sqlite3/{deps,src,build-tmp}/**/*",
       "!node_modules/sqlite3/**/*.{cc,h,md}"
@@ -55,6 +57,7 @@
       "dist-electron/native/**/*"
     ],
     "win": {
+      "icon": "assets/app-icon.ico",
       "target": "nsis"
     }
   },
