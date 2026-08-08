@@ -1,6 +1,7 @@
 import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
-import { Button, Checkbox, Form, Input, InputNumber, Modal, Select } from 'antd';
-import type { ReactNode, RefObject } from 'react';
+import { Button, Checkbox, Form, Input, InputNumber, Modal, TreeSelect } from 'antd';
+import type { RefObject } from 'react';
+import type { FolderTreeOption } from '../hooks/useFolderTreeOptions';
 import type { Session } from '../types';
 
 type SessionForm = Omit<Session, 'id'>;
@@ -12,9 +13,7 @@ type SessionModalProps = {
   showPassword: boolean;
   folderMenuOpen: boolean;
   folderMenuRef: RefObject<HTMLDivElement | null>;
-  getFolderLabel: (folderId: number | null) => string;
-  folderOptions: Array<{ label: string; value: number }>;
-  renderFolderTreeOptions: (selectedId: number | null, onPick: (folderId: number | null) => void) => ReactNode[];
+  folderTreeData: FolderTreeOption[];
   onChangeForm: (next: SessionForm) => void;
   onTogglePassword: () => void;
   onToggleFolderMenu: () => void;
@@ -31,9 +30,7 @@ export const SessionModal = (props: SessionModalProps) => {
     showPassword,
     folderMenuOpen,
     folderMenuRef,
-    getFolderLabel,
-    folderOptions,
-    renderFolderTreeOptions,
+    folderTreeData,
     onChangeForm,
     onTogglePassword,
     onToggleFolderMenu,
@@ -80,16 +77,16 @@ export const SessionModal = (props: SessionModalProps) => {
           />
         </Form.Item>
         <Form.Item label="目录">
-          <Select
+          <TreeSelect
             className="folder-select"
             open={folderMenuOpen}
             value={form.folder_id ?? 0}
-            options={folderOptions}
+            treeData={folderTreeData}
+            treeDefaultExpandAll
             onOpenChange={(open) => {
               if (open !== folderMenuOpen) onToggleFolderMenu();
             }}
             onChange={(value) => onPickFolder(value === 0 ? null : value)}
-            optionRender={(option) => <span title={String(option.label)}>{option.label}</span>}
           />
         </Form.Item>
         <div className="form-check-row">

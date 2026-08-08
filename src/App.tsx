@@ -266,7 +266,7 @@ export default function App() {
     showHiddenFiles: !!settings?.ui.showHiddenFiles,
     showAlert,
   });
-  const { getFolderLabel, folderOptions, renderFolderTreeOptions } = useFolderTreeOptions(folders);
+  const { folderTreeData } = useFolderTreeOptions(folders);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -594,9 +594,7 @@ export default function App() {
         showSessionPassword={showSessionPassword}
         sessionFolderMenuOpen={sessionFolderMenuOpen}
         sessionFolderMenuRef={sessionFolderMenuRef}
-        getFolderLabel={getFolderLabel}
-        folderOptions={folderOptions}
-        renderFolderTreeOptions={renderFolderTreeOptions}
+        folderTreeData={folderTreeData}
         setSessionForm={setSessionForm}
         showFolderModal={showFolderModal}
         folderName={folderName}

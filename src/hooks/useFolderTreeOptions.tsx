@@ -1,6 +1,11 @@
 import { useMemo } from 'react';
-import type { ReactNode } from 'react';
 import type { Folder } from '../types';
+
+export type FolderTreeOption = {
+  title: string;
+  value: number;
+  children?: FolderTreeOption[];
+};
 
 function compareByNameThenId(a: { name: string; id: number }, b: { name: string; id: number }): number {
   const byName = a.name.localeCompare(b.name, 'zh-Hans-CN', { sensitivity: 'base', numeric: true });
@@ -9,80 +14,23 @@ function compareByNameThenId(a: { name: string; id: number }, b: { name: string;
 }
 
 export function useFolderTreeOptions(folders: Folder[]) {
-  const folderPathMap = useMemo(() => {
+  return useMemo(() => {
     const byParent = new Map<number | null, Folder[]>();
     for (const folder of folders) {
       const list = byParent.get(folder.parent_id) || [];
       list.push(folder);
       byParent.set(folder.parent_id, list);
     }
-    const result = new Map<number, string>();
-    const walk = (parentId: number | null, prefix: string) => {
-      const children = (byParent.get(parentId) || []).sort(compareByNameThenId);
-      for (const child of children) {
-        const currentPath = prefix ? `${prefix}/${child.name}` : child.name;
-        result.set(child.id, currentPath);
-        walk(child.id, currentPath);
-      }
-    };
-    walk(null, '');
-    return result;
+    const build = (parentId: number | null): FolderTreeOption[] =>
+      (byParent.get(parentId) || [])
+        .sort(compareByNameThenId)
+        .map((folder) => {
+          const children = build(folder.id);
+          return children.length > 0
+            ? { title: folder.name, value: folder.id, children }
+            : { title: folder.name, value: folder.id };
+        });
+    const folderTreeData: FolderTreeOption[] = [{ title: '根目录', value: 0, children: build(null) }];
+    return { folderTreeData };
   }, [folders]);
-
-  const getFolderLabel = (folderId: number | null) => {
-    if (!folderId) return '根目录';
-    return folderPathMap.get(folderId) || '根目录';
-  };
-
-  const folderOptions = useMemo(() => [
-    { label: '根目录', value: 0 },
-    ...Array.from(folderPathMap.entries())
-      .map(([id, label]) => ({ label, value: id }))
-      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN', { sensitivity: 'base', numeric: true })),
-  ], [folderPathMap]);
-
-  const renderFolderTreeOptions = (
-    activeId: number | null,
-    onSelect: (folderId: number | null) => void,
-  ): ReactNode[] => {
-    const byParent = new Map<number | null, Folder[]>();
-    for (const folder of folders) {
-      const list = byParent.get(folder.parent_id) || [];
-      list.push(folder);
-      byParent.set(folder.parent_id, list);
-    }
-    const renderNodes = (parentId: number | null, depth: number): ReactNode[] => {
-      const children = (byParent.get(parentId) || []).sort(compareByNameThenId);
-      return children.flatMap((folder) => [
-        <button
-          key={`folder-option-${folder.id}`}
-          type="button"
-          className={activeId === folder.id ? 'active tree-option' : 'tree-option'}
-          style={{ paddingLeft: `${10 + depth * 16}px` }}
-          onClick={() => onSelect(folder.id)}
-          title={folderPathMap.get(folder.id) || folder.name}
-        >
-          {folder.name}
-        </button>,
-        ...renderNodes(folder.id, depth + 1),
-      ]);
-    };
-    return [
-      <button
-        key="folder-option-root"
-        type="button"
-        className={activeId == null ? 'active tree-option' : 'tree-option'}
-        onClick={() => onSelect(null)}
-      >
-        根目录
-      </button>,
-      ...renderNodes(null, 0),
-    ];
-  };
-
-  return {
-    getFolderLabel,
-    folderOptions,
-    renderFolderTreeOptions,
-  };
 }

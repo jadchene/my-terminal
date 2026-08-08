@@ -55,7 +55,7 @@ select { font: inherit; }
   --app-selection: #17355e;
   --app-item-hover: #15243a;
   --app-item-selected: #1c3d68;
-  --app-scrollbar: #767d88;
+  --app-scrollbar: #3a3f47;
   --app-modal-border: #30353d;
 }
 
@@ -73,7 +73,7 @@ select { font: inherit; }
   --app-selection: #dbeafe;
   --app-item-hover: #e9f2ff;
   --app-item-selected: #d4e7ff;
-  --app-scrollbar: #a8afb9;
+  --app-scrollbar: #cbd2db;
   --app-modal-border: #d6dce5;
 }
 
@@ -121,6 +121,22 @@ select { font: inherit; }
   gap: 4px;
 }
 
+.rail-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 2px 0 8px;
+}
+.rail-logo img {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: cover;
+  user-select: none;
+}
+
 .activity-rail .ant-btn {
   width: 40px;
   height: 40px;
@@ -159,7 +175,7 @@ select { font: inherit; }
   align-items: center;
   padding: 0 14px;
   color: var(--app-fg);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: .2px;
   border-bottom: 1px solid var(--app-border-soft);
@@ -293,7 +309,6 @@ select { font: inherit; }
 .terminal-container .xterm,
 .terminal-container .xterm-viewport { background-color: var(--bg, #000); }
 .terminal-container .xterm { height: 100%; }
-.terminal-container .xterm-viewport { scrollbar-color: var(--app-scrollbar) transparent; scrollbar-width: thin; }
 .pause-banner {
   position: absolute;
   z-index: 10;
@@ -320,6 +335,7 @@ select { font: inherit; }
   border-bottom: 1px solid var(--app-border-soft);
 }
 .sidebar-actions .ant-btn { color: var(--app-muted); }
+.sidebar-actions .ant-btn .anticon { font-size: 16px; }
 .sidebar-actions .ant-btn:hover { color: var(--app-fg) !important; background: var(--app-hover) !important; }
 
 .tree-scroll {
@@ -361,7 +377,7 @@ select { font: inherit; }
 .session-node .tree-row-btn { padding-left: 28px; }
 
 .sftp-toolbar { justify-content: space-between; gap: 0; padding-inline: 5px; }
-.sftp-toolbar .ant-btn { width: 28px; padding-inline: 0; }
+.sftp-toolbar .ant-btn { width: 32px; padding-inline: 0; }
 .path-bar { flex: 0 0 auto; padding: 7px 8px; border-bottom: 1px solid var(--app-border-soft); }
 .sftp-list {
   flex: 1;
@@ -419,6 +435,8 @@ select { font: inherit; }
 .transfer-count { position: absolute; top: 2px; right: 2px; color: var(--app-muted); font-size: 9px; }
 
 .status-panel { padding: 8px; overflow: auto; }
+.status-panel,
+.status-panel * { cursor: default !important; }
 .status-panel > .ant-tag { margin: 0 0 6px; }
 .status-group {
   margin-bottom: 8px;
@@ -533,20 +551,16 @@ body.theme-light .theme-segmented .ant-segmented-thumb {
   border-left: 3px solid #4f8cff;
 }
 .settings-group .ant-form-item { margin-bottom: 14px; }
+.settings-group .ant-form-item-label { text-align: left; }
 .settings-group .ant-form-item-label > label { color: var(--app-muted); }
 .settings-group .ant-input-number { width: 158px; }
-.switch-list { padding-bottom: 8px; }
-.switch-row { display: flex; align-items: center; justify-content: space-between; min-height: 42px; border-bottom: 1px solid var(--app-border-soft); }
-.switch-row:last-child { border-bottom: 0; }
-.runtime-path-row { display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: start; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--app-border-soft); }
-.runtime-path-row:last-child { border-bottom: 0; }
-.runtime-path-row > span { color: var(--app-muted); }
-.runtime-path-row .ant-typography {
+.settings-group .runtime-path-value {
   min-width: 0;
-  margin: 0;
   color: var(--app-muted);
   font-family: Consolas, monospace;
 }
+.settings-group .runtime-path-value,
+.settings-group .runtime-path-value * { cursor: default !important; }
 .session-form .ant-form-item { margin-bottom: 14px; }
 .form-grid-two { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 12px; }
 .form-grid-two .ant-input-number { width: 100%; }
@@ -645,7 +659,62 @@ body.theme-light .theme-segmented .ant-segmented-thumb {
 ::-webkit-scrollbar-track { background: transparent; }
 * { scrollbar-color: var(--app-scrollbar) transparent; scrollbar-width: thin; }
 ::-webkit-scrollbar-thumb { background: var(--app-scrollbar); border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--app-scrollbar) 78%, var(--app-fg)); }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--app-scrollbar) 86%, var(--app-fg)); }
+
+.tree-scroll,
+.sftp-list,
+.status-panel,
+.terminal-container .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.tree-scroll:hover,
+.sftp-list:hover,
+.status-panel:hover,
+.terminal-container:hover .xterm-viewport {
+  scrollbar-color: var(--app-scrollbar) transparent;
+}
+.tree-scroll::-webkit-scrollbar,
+.sftp-list::-webkit-scrollbar,
+.status-panel::-webkit-scrollbar,
+.terminal-container .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.tree-scroll::-webkit-scrollbar-track,
+.sftp-list::-webkit-scrollbar-track,
+.status-panel::-webkit-scrollbar-track,
+.terminal-container .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tree-scroll::-webkit-scrollbar-thumb,
+.sftp-list::-webkit-scrollbar-thumb,
+.status-panel::-webkit-scrollbar-thumb,
+.terminal-container .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 8px;
+}
+.tree-scroll:hover::-webkit-scrollbar-thumb,
+.sftp-list:hover::-webkit-scrollbar-thumb,
+.status-panel:hover::-webkit-scrollbar-thumb,
+.terminal-container:hover .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--app-scrollbar);
+}
+
+.terminal-container .xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 8px !important;
+}
+.terminal-container .xterm .xterm-scrollable-element > .scrollbar.horizontal {
+  height: 8px !important;
+}
+.terminal-container .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  background: transparent !important;
+  border-radius: 8px;
+  width: 8px !important;
+}
+.terminal-container:hover .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  background: var(--app-scrollbar) !important;
+}
 
 @media (max-width: 820px) {
   .body-layout { grid-template-columns: calc(var(--rail-width) + min(260px, 38vw)) 4px minmax(0, 1fr); }

@@ -6,13 +6,14 @@ import {
   SettingOutlined,
   SlidersOutlined,
 } from '@ant-design/icons';
-import { Button, Tooltip } from 'antd';
+import { Button } from 'antd';
 import type { DragEvent, MouseEvent } from 'react';
 import type { Folder, Metrics, Session, SftpItem } from '../types';
 import { SessionTreePanel } from './SessionTreePanel';
 import { SftpPanel } from './SftpPanel';
 import { StatusPanel } from './StatusPanel';
 import type { TransferRow } from '../hooks/useTransferQueue';
+import appIcon from '../../assets/app-icon.png';
 
 type SidebarShellProps = {
   sidebarTab: 'sessions' | 'sftp' | 'status';
@@ -102,28 +103,21 @@ export function SidebarShell(props: SidebarShellProps) {
     <aside className={`sidebar ${sidebarVisible ? '' : 'is-collapsed'}`}>
       <nav className="activity-rail" aria-label="功能导航">
         <div className="activity-rail-main">
-          <Tooltip placement="right" title="会话">
-            <Button className={sidebarTab === 'sessions' ? 'is-active' : ''} type="text" icon={<CloudServerOutlined />} onClick={() => selectSidebarTab('sessions')} />
-          </Tooltip>
-          <Tooltip placement="right" title="SFTP">
-            <Button className={sidebarTab === 'sftp' ? 'is-active' : ''} type="text" icon={<FolderOpenOutlined />} onClick={() => selectSidebarTab('sftp')} />
-          </Tooltip>
-          <Tooltip placement="right" title="系统状态">
-            <Button className={sidebarTab === 'status' ? 'is-active' : ''} type="text" icon={<SlidersOutlined />} onClick={() => selectSidebarTab('status')} />
-          </Tooltip>
+          <div className="rail-logo" title="Termio">
+            <img src={appIcon} alt="Termio" draggable={false} />
+          </div>
+          <Button className={sidebarTab === 'sessions' ? 'is-active' : ''} type="text" icon={<CloudServerOutlined />} onClick={() => selectSidebarTab('sessions')} />
+          <Button className={sidebarTab === 'sftp' ? 'is-active' : ''} type="text" icon={<FolderOpenOutlined />} onClick={() => selectSidebarTab('sftp')} />
+          <Button className={sidebarTab === 'status' ? 'is-active' : ''} type="text" icon={<SlidersOutlined />} onClick={() => selectSidebarTab('status')} />
         </div>
         <div className="activity-rail-footer">
-          <Tooltip placement="right" title={sidebarVisible ? '收起侧边栏' : '展开侧边栏'}>
-            <Button type="text" icon={sidebarVisible ? <LeftOutlined /> : <RightOutlined />} onClick={onToggleSidebar} />
-          </Tooltip>
-          <Tooltip placement="right" title="设置">
-            <Button type="text" icon={<SettingOutlined />} onClick={onOpenSettings} />
-          </Tooltip>
+          <Button type="text" icon={sidebarVisible ? <LeftOutlined /> : <RightOutlined />} onClick={onToggleSidebar} />
+          <Button type="text" icon={<SettingOutlined />} onClick={onOpenSettings} />
         </div>
       </nav>
       {sidebarVisible && <div className="sidebar-panel">
         <div className="sidebar-panel-title">
-          {sidebarTab === 'sessions' ? '会话' : sidebarTab === 'sftp' ? 'SFTP' : '系统状态'}
+          {sidebarTab === 'sessions' ? '会话' : sidebarTab === 'sftp' ? '文件' : '状态'}
         </div>
       {sidebarTab === 'sessions' && (
         <SessionTreePanel

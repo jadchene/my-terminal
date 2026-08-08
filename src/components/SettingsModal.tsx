@@ -44,12 +44,16 @@ const SettingGroup = ({ title, children }: { title: string; children: React.Reac
   </section>
 );
 
-const RuntimePath = ({ label, value }: { label: string; value?: string }) => (
-  <div className="runtime-path-row">
-    <span>{label}</span>
-    <Typography.Text ellipsis={{ tooltip: value }}>{value || '--'}</Typography.Text>
-  </div>
+const RuntimePath = ({ value }: { value?: string }) => (
+  <Typography.Text className="runtime-path-value" ellipsis={{ tooltip: value }}>{value || '--'}</Typography.Text>
 );
+
+const settingsFormLayout = {
+  layout: 'horizontal' as const,
+  colon: false,
+  labelCol: { style: { width: 140 } },
+  wrapperCol: { style: { flex: 1, minWidth: 0 } },
+};
 
 export const SettingsModal = (props: SettingsModalProps) => {
   const {
@@ -77,7 +81,7 @@ export const SettingsModal = (props: SettingsModalProps) => {
   const appearance = (
     <div className="settings-scroll">
       <SettingGroup title="界面">
-        <Form layout="horizontal" colon={false} labelCol={{ span: 6 }} wrapperCol={{ span: 18 }}>
+        <Form {...settingsFormLayout}>
           <Form.Item label="主题">
             <Segmented
               className="theme-segmented"
@@ -93,7 +97,7 @@ export const SettingsModal = (props: SettingsModalProps) => {
         </Form>
       </SettingGroup>
       <SettingGroup title="终端">
-        <Form layout="horizontal" colon={false} labelCol={{ span: 6 }} wrapperCol={{ span: 18 }}>
+        <Form {...settingsFormLayout}>
           <Form.Item label="终端字体">
             <Input value={draft.theme.terminalFontFamily} onChange={(event) => updateTheme({ terminalFontFamily: event.target.value })} />
           </Form.Item>
@@ -125,23 +129,26 @@ export const SettingsModal = (props: SettingsModalProps) => {
   const behavior = (
     <div className="settings-scroll">
       <SettingGroup title="会话行为">
-        <div className="switch-list">
-          {[
-            ['单实例运行', draft.behavior.singleInstance, (checked: boolean) => updateBehavior({ singleInstance: checked })],
-            ['选中内容后自动复制', draft.behavior.autoCopySelection, (checked: boolean) => updateBehavior({ autoCopySelection: checked })],
-            ['右键粘贴', draft.behavior.rightClickPaste, (checked: boolean) => updateBehavior({ rightClickPaste: checked })],
-            ['粘贴多行内容前确认', draft.behavior.multilineWarning, (checked: boolean) => updateBehavior({ multilineWarning: checked })],
-            ['聚焦终端时切换英文输入法', draft.behavior.autoSwitchEnglishInputMethod, (checked: boolean) => updateBehavior({ autoSwitchEnglishInputMethod: checked })],
-          ].map(([label, checked, action]) => (
-            <div className="switch-row" key={String(label)}>
-              <span>{String(label)}</span>
-              <Switch checked={Boolean(checked)} onChange={action as (checked: boolean) => void} />
-            </div>
-          ))}
-        </div>
+        <Form {...settingsFormLayout}>
+          <Form.Item label="单实例运行">
+            <Switch checked={draft.behavior.singleInstance} onChange={(checked) => updateBehavior({ singleInstance: checked })} />
+          </Form.Item>
+          <Form.Item label="选中内容后自动复制">
+            <Switch checked={draft.behavior.autoCopySelection} onChange={(checked) => updateBehavior({ autoCopySelection: checked })} />
+          </Form.Item>
+          <Form.Item label="右键粘贴">
+            <Switch checked={draft.behavior.rightClickPaste} onChange={(checked) => updateBehavior({ rightClickPaste: checked })} />
+          </Form.Item>
+          <Form.Item label="粘贴多行内容前确认">
+            <Switch checked={draft.behavior.multilineWarning} onChange={(checked) => updateBehavior({ multilineWarning: checked })} />
+          </Form.Item>
+          <Form.Item label="自动切换英文">
+            <Switch checked={draft.behavior.autoSwitchEnglishInputMethod} onChange={(checked) => updateBehavior({ autoSwitchEnglishInputMethod: checked })} />
+          </Form.Item>
+        </Form>
       </SettingGroup>
       <SettingGroup title="文件传输">
-        <Form layout="vertical" colon={false}>
+        <Form {...settingsFormLayout}>
           <Form.Item label="默认下载目录">
             <Input
               value={draft.behavior.defaultDownloadDir}
@@ -158,9 +165,11 @@ export const SettingsModal = (props: SettingsModalProps) => {
   const system = (
     <div className="settings-scroll">
       <SettingGroup title="运行环境">
-        <RuntimePath label="运行目录" value={runtimeInfo?.runtimeDir} />
-        <RuntimePath label="用户数据" value={runtimeInfo?.userDataPath} />
-        <RuntimePath label="数据库" value={runtimeInfo?.dbPath} />
+        <Form {...settingsFormLayout}>
+          <Form.Item label="运行目录"><RuntimePath value={runtimeInfo?.runtimeDir} /></Form.Item>
+          <Form.Item label="用户数据"><RuntimePath value={runtimeInfo?.userDataPath} /></Form.Item>
+          <Form.Item label="数据库"><RuntimePath value={runtimeInfo?.dbPath} /></Form.Item>
+        </Form>
       </SettingGroup>
     </div>
   );

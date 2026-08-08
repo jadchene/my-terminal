@@ -1,5 +1,6 @@
-import { Button, Form, Input, Modal, Select } from 'antd';
-import type { ReactNode, RefObject } from 'react';
+import { Button, Form, Input, Modal, TreeSelect } from 'antd';
+import type { RefObject } from 'react';
+import type { FolderTreeOption } from '../hooks/useFolderTreeOptions';
 
 type FolderModalProps = {
   show: boolean;
@@ -7,9 +8,7 @@ type FolderModalProps = {
   folderParent: number | null;
   folderParentMenuOpen: boolean;
   folderParentMenuRef: RefObject<HTMLDivElement | null>;
-  getFolderLabel: (folderId: number | null) => string;
-  folderOptions: Array<{ label: string; value: number }>;
-  renderFolderTreeOptions: (selectedId: number | null, onPick: (folderId: number | null) => void) => ReactNode[];
+  folderTreeData: FolderTreeOption[];
   onChangeName: (value: string) => void;
   onToggleParentMenu: () => void;
   onPickParent: (folderId: number | null) => void;
@@ -24,9 +23,7 @@ export const FolderModal = (props: FolderModalProps) => {
     folderParent,
     folderParentMenuOpen,
     folderParentMenuRef,
-    getFolderLabel,
-    folderOptions,
-    renderFolderTreeOptions,
+    folderTreeData,
     onChangeName,
     onToggleParentMenu,
     onPickParent,
@@ -51,16 +48,16 @@ export const FolderModal = (props: FolderModalProps) => {
           <Input autoFocus value={folderName} onChange={(event) => onChangeName(event.target.value)} onPressEnter={() => void onConfirm()} />
         </Form.Item>
         <Form.Item label="父目录">
-          <Select
+          <TreeSelect
             className="folder-select"
             open={folderParentMenuOpen}
             value={folderParent ?? 0}
-            options={folderOptions}
+            treeData={folderTreeData}
+            treeDefaultExpandAll
             onOpenChange={(open) => {
               if (open !== folderParentMenuOpen) onToggleParentMenu();
             }}
             onChange={(value) => onPickParent(value === 0 ? null : value)}
-            optionRender={(option) => <span title={String(option.label)}>{option.label}</span>}
           />
         </Form.Item>
       </Form>

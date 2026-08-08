@@ -1,6 +1,7 @@
 import type { Dispatch, MutableRefObject, ReactNode, SetStateAction } from 'react';
 import type { Folder, Session, Settings, TreeContextMenu } from '../types';
 import type { DialogState } from '../hooks/useDialog';
+import type { FolderTreeOption } from '../hooks/useFolderTreeOptions';
 import { SessionModal } from './SessionModal';
 import { FolderModal } from './FolderModal';
 import { SettingsModal } from './SettingsModal';
@@ -23,9 +24,7 @@ type ModalHostProps = {
   showSessionPassword: boolean;
   sessionFolderMenuOpen: boolean;
   sessionFolderMenuRef: MutableRefObject<HTMLDivElement | null>;
-  getFolderLabel: (folderId: number | null) => string;
-  folderOptions: Array<{ label: string; value: number }>;
-  renderFolderTreeOptions: (selectedId: number | null, onPick: (folderId: number | null) => void) => ReactNode[];
+  folderTreeData: FolderTreeOption[];
   setSessionForm: Dispatch<SetStateAction<SessionForm>>;
 
   showFolderModal: boolean;
@@ -96,9 +95,7 @@ export function ModalHost(props: ModalHostProps) {
     showSessionPassword,
     sessionFolderMenuOpen,
     sessionFolderMenuRef,
-    getFolderLabel,
-    folderOptions,
-    renderFolderTreeOptions,
+    folderTreeData,
     setSessionForm,
     showFolderModal,
     folderName,
@@ -140,9 +137,7 @@ export function ModalHost(props: ModalHostProps) {
         showPassword={showSessionPassword}
         folderMenuOpen={sessionFolderMenuOpen}
         folderMenuRef={sessionFolderMenuRef}
-        getFolderLabel={getFolderLabel}
-        folderOptions={folderOptions}
-        renderFolderTreeOptions={renderFolderTreeOptions}
+        folderTreeData={folderTreeData}
         onChangeForm={setSessionForm}
         onTogglePassword={sessionTreeActions.onToggleSessionPassword}
         onToggleFolderMenu={sessionTreeActions.onToggleSessionFolderMenu}
@@ -157,9 +152,7 @@ export function ModalHost(props: ModalHostProps) {
         folderParent={folderParent}
         folderParentMenuOpen={folderParentMenuOpen}
         folderParentMenuRef={folderParentMenuRef}
-        getFolderLabel={getFolderLabel}
-        folderOptions={folderOptions}
-        renderFolderTreeOptions={renderFolderTreeOptions}
+        folderTreeData={folderTreeData}
         onChangeName={setFolderName}
         onToggleParentMenu={sessionTreeActions.onToggleFolderParentMenu}
         onPickParent={sessionTreeActions.onPickFolderParent}
