@@ -1,68 +1,40 @@
 param(
+  [string]$SourceImage = (Join-Path $PSScriptRoot "..\assets\app-icon-source.png"),
   [string]$OutputDirectory = (Join-Path $PSScriptRoot "..\assets")
 )
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing.Common
 
+$resolvedSource = [System.IO.Path]::GetFullPath($SourceImage)
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
+if (-not [System.IO.File]::Exists($resolvedSource)) {
+  throw "Icon source image not found: $resolvedSource"
+}
 [System.IO.Directory]::CreateDirectory($resolvedOutput) | Out-Null
 
-function New-RoundedRectanglePath([float]$x, [float]$y, [float]$width, [float]$height, [float]$radius) {
-  $diameter = $radius * 2
-  $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
-  $path.AddArc($x, $y, $diameter, $diameter, 180, 90)
-  $path.AddArc($x + $width - $diameter, $y, $diameter, $diameter, 270, 90)
-  $path.AddArc($x + $width - $diameter, $y + $height - $diameter, $diameter, $diameter, 0, 90)
-  $path.AddArc($x, $y + $height - $diameter, $diameter, $diameter, 90, 90)
-  $path.CloseFigure()
-  return $path
-}
-
-function New-IconPng([int]$size) {
+function ConvertTo-IconPng([System.Drawing.Image]$source, [int]$size) {
   $bitmap = [System.Drawing.Bitmap]::new($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+  $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+  $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+  $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
   $graphics.Clear([System.Drawing.Color]::Transparent)
 
-  $inset = [Math]::Max(1, $size * 0.035)
-  $extent = $size - ($inset * 2)
-  $radius = $size * 0.215
-  $shape = New-RoundedRectanglePath $inset $inset $extent $extent $radius
-  $gradient = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
-    [System.Drawing.PointF]::new(0, 0),
-    [System.Drawing.PointF]::new($size, $size),
-    [System.Drawing.Color]::FromArgb(255, 31, 38, 42),
-    [System.Drawing.Color]::FromArgb(255, 0, 143, 112)
-  )
-  $graphics.FillPath($gradient, $shape)
-
-  $highlight = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
-    [System.Drawing.PointF]::new(0, 0),
-    [System.Drawing.PointF]::new(0, $size),
-    [System.Drawing.Color]::FromArgb(36, 255, 255, 255),
-    [System.Drawing.Color]::FromArgb(0, 255, 255, 255)
-  )
-  $graphics.FillPath($highlight, $shape)
-
-  $fontSize = $size * 0.32
-  $font = [System.Drawing.Font]::new("Consolas", $fontSize, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-  $format = [System.Drawing.StringFormat]::new()
-  $format.Alignment = [System.Drawing.StringAlignment]::Center
-  $format.LineAlignment = [System.Drawing.StringAlignment]::Center
-  $graphics.DrawString("MT", $font, [System.Drawing.Brushes]::White, [System.Drawing.RectangleF]::new($size * 0.006, $size * 0.019, $size, $size), $format)
+  $scale = [Math]::Min($size / $source.Width, $size / $source.Height)
+  $width = [int][Math]::Round($source.Width * $scale)
+  $height = [int][Math]::Round($source.Height * $scale)
+  $x = [int][Math]::Floor(($size - $width) / 2)
+  $y = [int][Math]::Floor(($size - $height) / 2)
+  $graphics.DrawImage($source, [System.Drawing.Rectangle]::new($x, $y, $width, $height))
 
   $stream = [System.IO.MemoryStream]::new()
   $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
   $bytes = $stream.ToArray()
 
   $stream.Dispose()
-  $format.Dispose()
-  $font.Dispose()
-  $highlight.Dispose()
-  $gradient.Dispose()
-  $shape.Dispose()
   $graphics.Dispose()
   $bitmap.Dispose()
   Write-Output -NoEnumerate $bytes
@@ -70,9 +42,16 @@ function New-IconPng([int]$size) {
 
 $sizes = @(16, 24, 32, 48, 64, 128, 256)
 $images = [System.Collections.Generic.List[byte[]]]::new()
-foreach ($size in $sizes) {
-  $images.Add((New-IconPng $size))
+$source = [System.Drawing.Image]::FromFile($resolvedSource)
+try {
+  foreach ($size in $sizes) {
+    $images.Add((ConvertTo-IconPng $source $size))
+  }
 }
+finally {
+  $source.Dispose()
+}
+
 [System.IO.File]::WriteAllBytes((Join-Path $resolvedOutput "app-icon.png"), $images[-1])
 
 $iconPath = Join-Path $resolvedOutput "app-icon.ico"
@@ -101,4 +80,4 @@ foreach ($image in $images) {
 $writer.Dispose()
 $file.Dispose()
 
-Write-Host "Generated app icons in $resolvedOutput"
+Write-Host "Generated app icons from $resolvedSource in $resolvedOutput"
