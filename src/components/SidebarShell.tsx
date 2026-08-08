@@ -1,8 +1,8 @@
 import {
   CloudServerOutlined,
   FolderOpenOutlined,
-  LeftOutlined,
-  RightOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   SettingOutlined,
   SlidersOutlined,
 } from '@ant-design/icons';
@@ -111,7 +111,7 @@ export function SidebarShell(props: SidebarShellProps) {
           <Button className={sidebarTab === 'status' ? 'is-active' : ''} type="text" icon={<SlidersOutlined />} onClick={() => selectSidebarTab('status')} />
         </div>
         <div className="activity-rail-footer">
-          <Button type="text" icon={sidebarVisible ? <LeftOutlined /> : <RightOutlined />} onClick={onToggleSidebar} />
+          <Button type="text" icon={sidebarVisible ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />} onClick={onToggleSidebar} />
           <Button type="text" icon={<SettingOutlined />} onClick={onOpenSettings} />
         </div>
       </nav>
