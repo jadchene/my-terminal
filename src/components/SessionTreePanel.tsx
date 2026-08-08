@@ -1,4 +1,4 @@
-import { DownOutlined, FolderAddOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
+import { DownOutlined, FolderAddOutlined, FolderOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
 import { Button, Empty, Tooltip } from 'antd';
 import type { MouseEvent } from 'react';
 import type { ReactNode } from 'react';
@@ -22,6 +22,25 @@ const compareByNameThenId = (a: { name: string; id: number }, b: { name: string;
   return a.id - b.id;
 };
 
+const TerminalIcon = () => (
+  <svg
+    className="session-type-icon"
+    viewBox="0 0 24 24"
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="2" y="4" width="20" height="16" rx="2" />
+    <path d="M6 9l3 3-3 3" />
+    <line x1="11" y1="15" x2="18" y2="15" />
+  </svg>
+);
+
 export const SessionTreePanel = (props: SessionTreePanelProps) => {
   const {
     folders,
@@ -42,7 +61,8 @@ export const SessionTreePanel = (props: SessionTreePanelProps) => {
       .map((session) => (
         <div key={session.id} className="session-node" onContextMenu={(e) => onOpenSessionMenu(e, session)}>
           <button className="link-btn tree-row-btn" onContextMenu={(e) => onOpenSessionMenu(e, session)} onClick={() => null} onDoubleClick={() => onOpenSession(session)}>
-            {session.name}
+            <TerminalIcon />
+            <span className="session-tree-name">{session.name}</span>
           </button>
         </div>
       ));
@@ -57,7 +77,8 @@ export const SessionTreePanel = (props: SessionTreePanelProps) => {
             <span className="folder-toggle-icon" aria-hidden="true">
               {expandedFolderIds.has(folder.id) ? <DownOutlined /> : <RightOutlined />}
             </span>
-            {folder.name}
+            <FolderOutlined className="folder-type-icon" />
+            <span className="folder-tree-name">{folder.name}</span>
           </div>
           {expandedFolderIds.has(folder.id) && (
             <div className="folder-children">

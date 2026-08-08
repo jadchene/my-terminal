@@ -4,6 +4,10 @@
 
 Termio 是一个本地 Windows SSH 客户端，把终端会话、SFTP 文件管理和远程系统状态集中在一个桌面应用中。
 
+## 截图
+
+![Termio](docs/screenshot.png)
+
 ## 功能
 
 - 支持多个 SSH 终端标签页，也可以为同一个保存的会话建立多个连接。

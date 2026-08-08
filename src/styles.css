@@ -373,6 +373,27 @@ select { font: inherit; }
   color: var(--app-muted);
   font-size: 10px;
 }
+.folder-type-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  color: #e0ad54;
+  font-size: 14px;
+}
+.session-type-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  color: var(--app-muted);
+  font-size: 13px;
+}
+.folder-tree-name,
+.session-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .folder-children { margin-left: 14px; border-left: 1px solid var(--app-border-soft); padding-left: 4px; }
 .session-node .tree-row-btn { padding-left: 28px; }
 
