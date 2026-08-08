@@ -133,13 +133,13 @@ export const SettingsModal = (props: SettingsModalProps) => {
           <Form.Item label="单实例运行">
             <Switch checked={draft.behavior.singleInstance} onChange={(checked) => updateBehavior({ singleInstance: checked })} />
           </Form.Item>
-          <Form.Item label="选中内容后自动复制">
+          <Form.Item label="选中自动复制">
             <Switch checked={draft.behavior.autoCopySelection} onChange={(checked) => updateBehavior({ autoCopySelection: checked })} />
           </Form.Item>
           <Form.Item label="右键粘贴">
             <Switch checked={draft.behavior.rightClickPaste} onChange={(checked) => updateBehavior({ rightClickPaste: checked })} />
           </Form.Item>
-          <Form.Item label="粘贴多行内容前确认">
+          <Form.Item label="粘贴多行确认">
             <Switch checked={draft.behavior.multilineWarning} onChange={(checked) => updateBehavior({ multilineWarning: checked })} />
           </Form.Item>
           <Form.Item label="自动切换英文">
