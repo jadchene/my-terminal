@@ -4,7 +4,7 @@
 
 Termio is a local Windows SSH client that brings terminal sessions, SFTP file management, and remote system status into one desktop app.
 
-Current version: `1.0.0`
+Current version: `1.0.1`
 
 ## Features
 

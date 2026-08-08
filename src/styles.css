@@ -197,7 +197,7 @@ select { font: inherit; }
 .title-tabs .ant-tabs,
 .title-tabs .ant-tabs-nav { height: 100%; margin: 0; }
 .title-tabs .ant-tabs-nav::before { border: 0; }
-.title-tabs .ant-tabs-nav-wrap { -webkit-app-region: no-drag; }
+.title-tabs .ant-tabs-nav-wrap { -webkit-app-region: drag; }
 .title-tabs .ant-tabs-tab {
   min-width: 150px;
   max-width: 230px;
@@ -206,7 +206,9 @@ select { font: inherit; }
   padding: 0 10px !important;
   color: var(--app-muted);
   border-right: 1px solid var(--app-border-soft);
+  -webkit-app-region: no-drag;
 }
+.title-tabs .ant-tabs-nav-operations { -webkit-app-region: no-drag; }
 .title-tabs .ant-tabs-tab-btn { width: 100%; min-width: 0; }
 .title-tabs .ant-tabs-tab:hover { color: var(--app-fg); background: var(--app-hover); }
 .title-tabs .ant-tabs-tab-active { background: var(--app-bg); }
@@ -275,6 +277,9 @@ select { font: inherit; }
   overflow: hidden;
   background: var(--bg, #000);
 }
+
+.terminal-zone,
+.terminal-zone * { cursor: default !important; }
 
 .terminal-container { width: 100%; height: 100%; padding: 10px 12px 8px; }
 .terminal-container .xterm { height: 100%; }
