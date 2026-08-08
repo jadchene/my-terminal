@@ -4,7 +4,7 @@
 
 Termio 是一个本地 Windows SSH 客户端，把终端会话、SFTP 文件管理和远程系统状态集中在一个桌面应用中。
 
-当前版本：`1.0.2`
+当前版本：`1.0.3`
 
 ## 功能
 
@@ -45,9 +45,11 @@ npm run dev
 开发模式的数据保存在项目目录中；打包后的数据保存在 `Termio.exe` 旁边：
 
 ```text
-app.db
-user-data/window-state.json
+data/app.db
+data/user-data/window-state.json
 ```
+
+旧版本存放在运行目录根部的数据会在首次启动时自动迁移到 `data/`。
 
 ## 开发
 

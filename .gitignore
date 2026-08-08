@@ -5,8 +5,9 @@ electron/main.js
 release
 *.log
 config.json
+data/
 app.db
-user-data
+user-data/
 .env
 .env.*
 .DS_Store

@@ -4,7 +4,7 @@
 
 Termio is a local Windows SSH client that brings terminal sessions, SFTP file management, and remote system status into one desktop app.
 
-Current version: `1.0.2`
+Current version: `1.0.3`
 
 ## Features
 
@@ -45,9 +45,11 @@ The interface uses the bundled MiSans font. Terminal background, default text, a
 Development data is stored in the project directory. Packaged data is stored next to `Termio.exe`:
 
 ```text
-app.db
-user-data/window-state.json
+data/app.db
+data/user-data/window-state.json
 ```
+
+Data from earlier versions is moved into `data/` automatically on first launch.
 
 ## Development
 

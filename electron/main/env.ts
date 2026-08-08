@@ -23,11 +23,31 @@ export const appRoot = isDev ? devAppRoot : app.getAppPath();
 
 export const runtimeDir = isDev ? devAppRoot : path.dirname(process.execPath);
 
-export const userDataPath = path.join(runtimeDir, 'user-data');
+export const dataDir = path.join(runtimeDir, 'data');
 
-export const dbPath = path.join(runtimeDir, 'app.db');
+export const userDataPath = path.join(dataDir, 'user-data');
+
+export const dbPath = path.join(dataDir, 'app.db');
 
 export const windowStatePath = path.join(userDataPath, 'window-state.json');
+
+function migrateLegacyRuntimeData() {
+  const legacyDbPath = path.join(runtimeDir, 'app.db');
+  const legacyUserDataPath = path.join(runtimeDir, 'user-data');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    if (fs.existsSync(legacyDbPath) && !fs.existsSync(dbPath)) {
+      fs.renameSync(legacyDbPath, dbPath);
+    }
+    if (fs.existsSync(legacyUserDataPath) && !fs.existsSync(userDataPath)) {
+      fs.renameSync(legacyUserDataPath, userDataPath);
+    }
+  } catch (error) {
+    console.warn('failed to migrate legacy runtime data:', error);
+  }
+}
+
+migrateLegacyRuntimeData();
 
 export const preloadCandidates = [
   path.join(appRoot, 'electron', 'preload.js'),
