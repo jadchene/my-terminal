@@ -24,6 +24,7 @@ type ModalHostProps = {
   sessionFolderMenuOpen: boolean;
   sessionFolderMenuRef: MutableRefObject<HTMLDivElement | null>;
   getFolderLabel: (folderId: number | null) => string;
+  folderOptions: Array<{ label: string; value: number }>;
   renderFolderTreeOptions: (selectedId: number | null, onPick: (folderId: number | null) => void) => ReactNode[];
   setSessionForm: Dispatch<SetStateAction<SessionForm>>;
 
@@ -96,6 +97,7 @@ export function ModalHost(props: ModalHostProps) {
     sessionFolderMenuOpen,
     sessionFolderMenuRef,
     getFolderLabel,
+    folderOptions,
     renderFolderTreeOptions,
     setSessionForm,
     showFolderModal,
@@ -139,6 +141,7 @@ export function ModalHost(props: ModalHostProps) {
         folderMenuOpen={sessionFolderMenuOpen}
         folderMenuRef={sessionFolderMenuRef}
         getFolderLabel={getFolderLabel}
+        folderOptions={folderOptions}
         renderFolderTreeOptions={renderFolderTreeOptions}
         onChangeForm={setSessionForm}
         onTogglePassword={sessionTreeActions.onToggleSessionPassword}
@@ -155,6 +158,7 @@ export function ModalHost(props: ModalHostProps) {
         folderParentMenuOpen={folderParentMenuOpen}
         folderParentMenuRef={folderParentMenuRef}
         getFolderLabel={getFolderLabel}
+        folderOptions={folderOptions}
         renderFolderTreeOptions={renderFolderTreeOptions}
         onChangeName={setFolderName}
         onToggleParentMenu={sessionTreeActions.onToggleFolderParentMenu}

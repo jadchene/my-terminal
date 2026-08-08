@@ -1,19 +1,13 @@
-import type { Dispatch, SetStateAction } from 'react';
-
 type UseWindowActionsParams = {
   closeTab: (tabId: number) => Promise<void>;
-  setMenuOpen: Dispatch<SetStateAction<boolean>>;
 };
 
 export function useWindowActions(params: UseWindowActionsParams) {
-  const { closeTab, setMenuOpen } = params;
+  const { closeTab } = params;
 
   return {
     onCloseTab: (tabId: number) => {
       closeTab(tabId).catch(() => null);
-    },
-    onToggleMenu: () => {
-      setMenuOpen((v) => !v);
     },
     onMinimize: () => {
       void window.terminalApi.minimizeWindow();

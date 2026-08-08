@@ -7,6 +7,15 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      ignored: [
+        '**/app.db*',
+        '**/dist/**',
+        '**/dist-electron/**',
+        '**/release/**',
+        '**/user-data/**',
+      ],
+    },
   },
   build: {
     rolldownOptions: {
@@ -20,10 +29,6 @@ export default defineConfig({
             {
               name: 'terminal-vendor',
               test: /node_modules[\\/]@xterm[\\/]/,
-            },
-            {
-              name: 'icons-vendor',
-              test: /node_modules[\\/]lucide-react[\\/]/,
             },
           ],
         },

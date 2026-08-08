@@ -1,4 +1,12 @@
-import { Activity, FolderOpen, FolderTree } from 'lucide-react';
+import {
+  CloudServerOutlined,
+  FolderOpenOutlined,
+  LeftOutlined,
+  RightOutlined,
+  SettingOutlined,
+  SlidersOutlined,
+} from '@ant-design/icons';
+import { Button, Tooltip } from 'antd';
 import type { DragEvent, MouseEvent } from 'react';
 import type { Folder, Metrics, Session, SftpItem } from '../types';
 import { SessionTreePanel } from './SessionTreePanel';
@@ -8,6 +16,7 @@ import type { TransferRow } from '../hooks/useTransferQueue';
 
 type SidebarShellProps = {
   sidebarTab: 'sessions' | 'sftp' | 'status';
+  sidebarVisible: boolean;
   setSidebarTab: (tab: 'sessions' | 'sftp' | 'status') => void;
   folders: Folder[];
   sessions: Session[];
@@ -53,11 +62,14 @@ type SidebarShellProps = {
   };
   onCancelTransfer: (row: TransferRow) => void;
   currentMetrics: Metrics | null;
+  onOpenSettings: () => void;
+  onToggleSidebar: () => void;
 };
 
 export function SidebarShell(props: SidebarShellProps) {
   const {
     sidebarTab,
+    sidebarVisible,
     setSidebarTab,
     folders,
     sessions,
@@ -78,33 +90,41 @@ export function SidebarShell(props: SidebarShellProps) {
     sftpInteractions,
     onCancelTransfer,
     currentMetrics,
+    onOpenSettings,
+    onToggleSidebar,
   } = props;
+  const selectSidebarTab = (nextTab: 'sessions' | 'sftp' | 'status') => {
+    setSidebarTab(nextTab);
+    if (!sidebarVisible) onToggleSidebar();
+  };
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-tabs">
-        <button
-          className={`icon-btn top-icon-btn ${sidebarTab === 'sessions' ? 'active-tab-icon' : ''}`}
-          title="会话树"
-          onClick={() => setSidebarTab('sessions')}
-        >
-          <FolderTree size={16} strokeWidth={1.8} />
-        </button>
-        <button
-          className={`icon-btn top-icon-btn ${sidebarTab === 'sftp' ? 'active-tab-icon' : ''}`}
-          title="SFTP"
-          onClick={() => setSidebarTab('sftp')}
-        >
-          <FolderOpen size={16} strokeWidth={1.8} />
-        </button>
-        <button
-          className={`icon-btn top-icon-btn ${sidebarTab === 'status' ? 'active-tab-icon' : ''}`}
-          title="状态"
-          onClick={() => setSidebarTab('status')}
-        >
-          <Activity size={16} strokeWidth={1.8} />
-        </button>
-      </div>
+    <aside className={`sidebar ${sidebarVisible ? '' : 'is-collapsed'}`}>
+      <nav className="activity-rail" aria-label="功能导航">
+        <div className="activity-rail-main">
+          <Tooltip placement="right" title="会话">
+            <Button className={sidebarTab === 'sessions' ? 'is-active' : ''} type="text" icon={<CloudServerOutlined />} onClick={() => selectSidebarTab('sessions')} />
+          </Tooltip>
+          <Tooltip placement="right" title="SFTP">
+            <Button className={sidebarTab === 'sftp' ? 'is-active' : ''} type="text" icon={<FolderOpenOutlined />} onClick={() => selectSidebarTab('sftp')} />
+          </Tooltip>
+          <Tooltip placement="right" title="系统状态">
+            <Button className={sidebarTab === 'status' ? 'is-active' : ''} type="text" icon={<SlidersOutlined />} onClick={() => selectSidebarTab('status')} />
+          </Tooltip>
+        </div>
+        <div className="activity-rail-footer">
+          <Tooltip placement="right" title={sidebarVisible ? '收起侧边栏' : '展开侧边栏'}>
+            <Button type="text" icon={sidebarVisible ? <LeftOutlined /> : <RightOutlined />} onClick={onToggleSidebar} />
+          </Tooltip>
+          <Tooltip placement="right" title="设置">
+            <Button type="text" icon={<SettingOutlined />} onClick={onOpenSettings} />
+          </Tooltip>
+        </div>
+      </nav>
+      {sidebarVisible && <div className="sidebar-panel">
+        <div className="sidebar-panel-title">
+          {sidebarTab === 'sessions' ? '会话' : sidebarTab === 'sftp' ? 'SFTP' : '系统状态'}
+        </div>
       {sidebarTab === 'sessions' && (
         <SessionTreePanel
           folders={folders}
@@ -162,6 +182,7 @@ export function SidebarShell(props: SidebarShellProps) {
         />
       )}
       {sidebarTab === 'status' && <StatusPanel activeSessionId={activeSessionId} currentMetrics={currentMetrics} />}
+      </div>}
     </aside>
   );
 }

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { App as AntApp, Button, ConfigProvider, theme as antTheme } from 'antd';
 import '@xterm/xterm/css/xterm.css';
 import type {
   Folder,
@@ -6,6 +7,7 @@ import type {
   Session,
   Settings,
   TreeContextMenu,
+  ConnectionState,
 } from './types';
 import { AppHeader } from './components/AppHeader';
 import { SidebarShell } from './components/SidebarShell';
@@ -27,6 +29,7 @@ import { useSettingsActions } from './hooks/useSettingsActions';
 import { useWindowActions } from './hooks/useWindowActions';
 import { formatSftpError, isSilentSftpError } from './utils/sftpError';
 import { formatSftpMeta } from './utils/sftpFormat';
+import { getTerminalTheme } from './utils/terminalTheme';
 
 type SessionForm = Omit<Session, 'id'>;
 type Tab = { id: number; sessionId: number; title: string };
@@ -65,7 +68,7 @@ export default function App() {
   const [metricsBySession, setMetricsBySession] = useState<Record<number, Metrics>>({});
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'appearance' | 'behavior' | 'system'>('appearance');
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [connectionStates, setConnectionStates] = useState<Record<number, ConnectionState>>({});
   const [isMaximized, setIsMaximized] = useState(false);
 
   const [showSessionModal, setShowSessionModal] = useState(false);
@@ -91,6 +94,15 @@ export default function App() {
   const [treeMenu, setTreeMenu] = useState<TreeContextMenu | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<number>>(new Set());
+
+  const setConnectionState = useCallback((tabId: number, state: ConnectionState | null) => {
+    setConnectionStates((previous) => {
+      if (state) return { ...previous, [tabId]: state };
+      const next = { ...previous };
+      delete next[tabId];
+      return next;
+    });
+  }, []);
 
   const disconnectedByTabRef = useRef<Map<number, boolean>>(new Map());
   const reconnectingTabRef = useRef<Set<number>>(new Set());
@@ -254,7 +266,7 @@ export default function App() {
     showHiddenFiles: !!settings?.ui.showHiddenFiles,
     showAlert,
   });
-  const { getFolderLabel, renderFolderTreeOptions } = useFolderTreeOptions(folders);
+  const { getFolderLabel, folderOptions, renderFolderTreeOptions } = useFolderTreeOptions(folders);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -268,6 +280,14 @@ export default function App() {
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+  useEffect(() => {
+    const isDarkTheme = settings?.theme.mode !== 'light';
+    document.body.classList.toggle('theme-dark', isDarkTheme);
+    document.body.classList.toggle('theme-light', !isDarkTheme);
+    return () => {
+      document.body.classList.remove('theme-dark', 'theme-light');
+    };
+  }, [settings?.theme.mode]);
 
   const { sidebarWidth: resolvedSidebarWidth, startSidebarResize } = useSidebarResize({
     settings,
@@ -300,6 +320,7 @@ export default function App() {
     updateTransferRow,
     markTransferBatchComplete,
     markTransferError,
+    setConnectionState,
   });
 
   const { reconnectTab, connectSession, closeTab } = useSessionTabs({
@@ -349,6 +370,7 @@ export default function App() {
     showAlert,
     isAuthError,
     isHostKeyMismatchError,
+    setConnectionState,
   });
 
   useEffect(() => {
@@ -451,13 +473,11 @@ export default function App() {
     setShowSettings,
     setSettingsTab,
     setCursorStyleMenuOpen,
-    setMenuOpen,
     showAlert,
   });
 
   const windowActions = useWindowActions({
     closeTab,
-    setMenuOpen,
   });
 
   if (!settings) {
@@ -468,7 +488,7 @@ export default function App() {
           {bootstrapError && (
             <>
               <div className="loading-error">{bootstrapError}</div>
-              <button type="button" onClick={() => void retryBootstrap()}>重试</button>
+              <Button type="primary" onClick={() => void retryBootstrap()}>重试</Button>
             </>
           )}
         </div>
@@ -479,63 +499,74 @@ export default function App() {
   const currentMetrics = activeSessionId ? (metricsBySession[activeSessionId] ?? null) : metrics;
   const currentTransferRows = activeSessionId ? transferRows.filter((it) => it.sessionId === activeSessionId) : [];
 
+  const isDark = settings.theme.mode !== 'light';
+  const terminalTheme = getTerminalTheme(settings.theme.mode);
+
   return (
-    <div
-      className="app-shell"
+    <ConfigProvider
+      theme={{
+        algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
+        token: {
+          colorPrimary: '#4f8cff',
+          colorBgBase: isDark ? '#000000' : '#f5f7fa',
+          colorBgContainer: isDark ? '#101010' : '#ffffff',
+          colorBgElevated: isDark ? '#080808' : '#ffffff',
+          colorBorder: isDark ? '#2a2a2a' : '#d9dfe8',
+          borderRadius: 6,
+          fontFamily: 'MiSans, sans-serif',
+          fontSize: settings.theme.uiFontSize || 13,
+        },
+      }}
+    >
+      <AntApp className={`app-shell theme-${isDark ? 'dark' : 'light'}`}
       style={
         {
-          '--bg': settings.theme.backgroundColor,
-          '--fg': settings.theme.foregroundColor,
+          '--bg': terminalTheme.background,
+          '--fg': terminalTheme.foreground,
           '--sidebar-width': `${resolvedSidebarWidth}px`,
-          '--ui-font-family': settings.theme.uiFontFamily || 'Microsoft YaHei, Segoe UI, sans-serif',
+          '--ui-font-family': 'MiSans, sans-serif',
           '--ui-font-size': `${settings.theme.uiFontSize || 13}px`,
         } as CSSProperties
       }
     >
       <main className={`body-layout ${settings.ui.sidebarVisible ? '' : 'sidebar-hidden'}`}>
+        <SidebarShell
+          sidebarTab={sidebarTab}
+          sidebarVisible={settings.ui.sidebarVisible}
+          setSidebarTab={setSidebarTab}
+          folders={folders}
+          sessions={sessions}
+          expandedFolderIds={expandedFolderIds}
+          setExpandedFolderIds={setExpandedFolderIds}
+          connectSession={connectSession}
+          sessionTreeActions={sessionTreeActions}
+          activeSessionId={activeSessionId}
+          activeSession={activeSession}
+          settingsShowHiddenFiles={settings.ui.showHiddenFiles}
+          sftpPath={sftpPath}
+          sftpPathInput={sftpPathInput}
+          sftpItems={sftpItems}
+          selectedSftpPaths={selectedSftpPaths}
+          dropOver={sftpUploadDropOver}
+          transferRows={currentTransferRows}
+          formatSftpMeta={formatSftpMeta}
+          sftpInteractions={sftpInteractions}
+          onCancelTransfer={(row) => void cancelTransferRow(row)}
+          currentMetrics={currentMetrics}
+          onOpenSettings={settingsActions.openSettingsModal}
+          onToggleSidebar={settingsActions.toggleSidebarVisible}
+        />
         <AppHeader
           tabs={tabs}
           activeSessionId={activeSessionId}
-          menuOpen={menuOpen}
+          connectionStates={connectionStates}
           isMaximized={isMaximized}
-          sidebarVisible={settings.ui.sidebarVisible}
           onSelectTab={setActiveSessionId}
           onCloseTab={windowActions.onCloseTab}
-          onToggleMenu={windowActions.onToggleMenu}
-          onOpenSettings={settingsActions.openSettingsModal}
-          onToggleSidebar={settingsActions.toggleSidebarVisible}
           onMinimize={windowActions.onMinimize}
           onToggleMaximize={windowActions.onToggleMaximize}
           onCloseWindow={windowActions.onCloseWindow}
         />
-        {settings.ui.sidebarVisible && (
-          <SidebarShell
-            sidebarTab={sidebarTab}
-            setSidebarTab={setSidebarTab}
-            folders={folders}
-            sessions={sessions}
-            expandedFolderIds={expandedFolderIds}
-            setExpandedFolderIds={setExpandedFolderIds}
-            connectSession={connectSession}
-            sessionTreeActions={sessionTreeActions}
-            activeSessionId={activeSessionId}
-            activeSession={activeSession}
-            settingsShowHiddenFiles={settings.ui.showHiddenFiles}
-            sftpPath={sftpPath}
-            sftpPathInput={sftpPathInput}
-            sftpItems={sftpItems}
-            selectedSftpPaths={selectedSftpPaths}
-            dropOver={sftpUploadDropOver}
-            transferRows={currentTransferRows}
-            formatSftpMeta={formatSftpMeta}
-            sftpInteractions={sftpInteractions}
-            onCancelTransfer={(row) => {
-              void cancelTransferRow(row);
-            }}
-            currentMetrics={currentMetrics}
-          />
-        )}
-
         {settings.ui.sidebarVisible && (
           <div
             className="sidebar-resizer"
@@ -564,6 +595,7 @@ export default function App() {
         sessionFolderMenuOpen={sessionFolderMenuOpen}
         sessionFolderMenuRef={sessionFolderMenuRef}
         getFolderLabel={getFolderLabel}
+        folderOptions={folderOptions}
         renderFolderTreeOptions={renderFolderTreeOptions}
         setSessionForm={setSessionForm}
         showFolderModal={showFolderModal}
@@ -596,6 +628,7 @@ export default function App() {
         settingsActions={settingsActions}
         sftpInteractions={sftpInteractions}
       />
-    </div>
+      </AntApp>
+    </ConfigProvider>
   );
 }

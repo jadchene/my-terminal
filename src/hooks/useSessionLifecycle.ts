@@ -81,8 +81,7 @@ export function useSessionLifecycle(params: UseSessionLifecycleParams) {
     }
   }, [
     activeSessionId,
-    settings?.theme.backgroundColor,
-    settings?.theme.foregroundColor,
+    settings?.theme.mode,
     settings?.theme.terminalFontFamily,
     settings?.theme.terminalFontSize,
     settings?.theme.terminalCursorStyle,

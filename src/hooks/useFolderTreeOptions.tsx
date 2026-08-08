@@ -34,6 +34,13 @@ export function useFolderTreeOptions(folders: Folder[]) {
     return folderPathMap.get(folderId) || '根目录';
   };
 
+  const folderOptions = useMemo(() => [
+    { label: '根目录', value: 0 },
+    ...Array.from(folderPathMap.entries())
+      .map(([id, label]) => ({ label, value: id }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN', { sensitivity: 'base', numeric: true })),
+  ], [folderPathMap]);
+
   const renderFolderTreeOptions = (
     activeId: number | null,
     onSelect: (folderId: number | null) => void,
@@ -75,6 +82,7 @@ export function useFolderTreeOptions(folders: Folder[]) {
 
   return {
     getFolderLabel,
+    folderOptions,
     renderFolderTreeOptions,
   };
 }

@@ -112,11 +112,12 @@ export function registerIpc() {
       throw new Error('当前已有另一个实例占用单实例锁，无法启用单实例运行');
     }
     await saveSettings(merged);
+    const saved = readSettings();
     if (!(merged.behavior.singleInstance ?? true)) {
       applySingleInstancePreference(false);
     }
-    safeSend('settings:changed', merged);
-    return merged;
+    safeSend('settings:changed', saved);
+    return saved;
   });
 
   ipcMain.handle('window:minimize', () => sharedState.mainWindow?.minimize());

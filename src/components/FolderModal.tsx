@@ -1,3 +1,4 @@
+import { Button, Form, Input, Modal, Select } from 'antd';
 import type { ReactNode, RefObject } from 'react';
 
 type FolderModalProps = {
@@ -7,6 +8,7 @@ type FolderModalProps = {
   folderParentMenuOpen: boolean;
   folderParentMenuRef: RefObject<HTMLDivElement | null>;
   getFolderLabel: (folderId: number | null) => string;
+  folderOptions: Array<{ label: string; value: number }>;
   renderFolderTreeOptions: (selectedId: number | null, onPick: (folderId: number | null) => void) => ReactNode[];
   onChangeName: (value: string) => void;
   onToggleParentMenu: () => void;
@@ -15,7 +17,7 @@ type FolderModalProps = {
   onConfirm: () => Promise<void>;
 };
 
-export function FolderModal(props: FolderModalProps) {
+export const FolderModal = (props: FolderModalProps) => {
   const {
     show,
     folderName,
@@ -23,6 +25,7 @@ export function FolderModal(props: FolderModalProps) {
     folderParentMenuOpen,
     folderParentMenuRef,
     getFolderLabel,
+    folderOptions,
     renderFolderTreeOptions,
     onChangeName,
     onToggleParentMenu,
@@ -30,31 +33,37 @@ export function FolderModal(props: FolderModalProps) {
     onCancel,
     onConfirm,
   } = props;
-  if (!show) return null;
 
   return (
-    <div className="modal-mask">
-      <div className="modal-card">
-        <h3>新建目录</h3>
-        <label>
-          名称
-          <input value={folderName} onChange={(e) => onChangeName(e.target.value)} />
-        </label>
-        <label>
-          父目录
-          <div className="select-like" ref={folderParentMenuRef}>
-            <button type="button" className="select-like-trigger" onClick={onToggleParentMenu}>
-              <span>{getFolderLabel(folderParent)}</span>
-              <span aria-hidden="true">▾</span>
-            </button>
-            {folderParentMenuOpen && <div className="select-like-menu">{renderFolderTreeOptions(folderParent, onPickParent)}</div>}
-          </div>
-        </label>
-        <div className="modal-actions">
-          <button onClick={onCancel}>取消</button>
-          <button onClick={() => void onConfirm()}>确认</button>
-        </div>
-      </div>
-    </div>
+    <Modal
+      open={show}
+      title="新建目录"
+      centered
+      mask={{ closable: false }}
+      onCancel={onCancel}
+      footer={[
+        <Button key="cancel" onClick={onCancel}>取消</Button>,
+        <Button key="confirm" type="primary" onClick={() => void onConfirm()}>确认</Button>,
+      ]}
+    >
+      <Form layout="vertical" colon={false}>
+        <Form.Item label="名称" required>
+          <Input autoFocus value={folderName} onChange={(event) => onChangeName(event.target.value)} onPressEnter={() => void onConfirm()} />
+        </Form.Item>
+        <Form.Item label="父目录">
+          <Select
+            className="folder-select"
+            open={folderParentMenuOpen}
+            value={folderParent ?? 0}
+            options={folderOptions}
+            onOpenChange={(open) => {
+              if (open !== folderParentMenuOpen) onToggleParentMenu();
+            }}
+            onChange={(value) => onPickParent(value === 0 ? null : value)}
+            optionRender={(option) => <span title={String(option.label)}>{option.label}</span>}
+          />
+        </Form.Item>
+      </Form>
+    </Modal>
   );
-}
+};

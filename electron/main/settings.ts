@@ -12,9 +12,10 @@ import { sharedState } from './state';
 
 export const defaultSettings: AppSettings = {
   theme: {
+    mode: 'dark',
     backgroundColor: '#000000',
-    foregroundColor: '#FFFFFF',
-    uiFontFamily: 'Microsoft YaHei, Segoe UI, sans-serif',
+    foregroundColor: '#E5E7EB',
+    uiFontFamily: 'MiSans, sans-serif',
     uiFontSize: 13,
     terminalFontFamily: 'Consolas, Courier New, monospace',
     terminalFontSize: 16,
@@ -60,10 +61,18 @@ export function readSettings(): AppSettings {
 }
 
 export function normalizeSettings(parsed: any): AppSettings {
+  const mode = parsed?.theme?.mode === 'light' ? 'light' : 'dark';
   return {
     ...defaultSettings,
     ...(parsed || {}),
-    theme: { ...defaultSettings.theme, ...((parsed && parsed.theme) || {}) },
+    theme: {
+      ...defaultSettings.theme,
+      ...((parsed && parsed.theme) || {}),
+      mode,
+      backgroundColor: mode === 'light' ? '#FFFFFF' : '#000000',
+      foregroundColor: mode === 'light' ? '#1F2328' : '#E5E7EB',
+      uiFontFamily: 'MiSans, sans-serif',
+    },
     behavior: { ...defaultSettings.behavior, ...((parsed && parsed.behavior) || {}) },
     ui: { ...defaultSettings.ui, ...((parsed && parsed.ui) || {}) },
   };

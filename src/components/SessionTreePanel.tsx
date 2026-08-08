@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight, FolderPlus, TerminalSquare } from 'lucide-react';
+import { DownOutlined, FolderAddOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
+import { Button, Empty, Tooltip } from 'antd';
 import type { MouseEvent } from 'react';
 import type { ReactNode } from 'react';
 import type { Folder, Session } from '../types';
@@ -15,13 +16,13 @@ type SessionTreePanelProps = {
   onCreateSession: () => void;
 };
 
-function compareByNameThenId(a: { name: string; id: number }, b: { name: string; id: number }): number {
+const compareByNameThenId = (a: { name: string; id: number }, b: { name: string; id: number }): number => {
   const byName = a.name.localeCompare(b.name, 'zh-Hans-CN', { sensitivity: 'base', numeric: true });
   if (byName !== 0) return byName;
   return a.id - b.id;
-}
+};
 
-export function SessionTreePanel(props: SessionTreePanelProps) {
+export const SessionTreePanel = (props: SessionTreePanelProps) => {
   const {
     folders,
     sessions,
@@ -54,7 +55,7 @@ export function SessionTreePanel(props: SessionTreePanelProps) {
         <div key={folder.id} className="folder-node">
           <div className="folder-title" onClick={() => onToggleFolder(folder.id)} onContextMenu={(e) => onOpenFolderMenu(e, folder)}>
             <span className="folder-toggle-icon" aria-hidden="true">
-              {expandedFolderIds.has(folder.id) ? <ChevronDown size={14} strokeWidth={1.8} /> : <ChevronRight size={14} strokeWidth={1.8} />}
+              {expandedFolderIds.has(folder.id) ? <DownOutlined /> : <RightOutlined />}
             </span>
             {folder.name}
           </div>
@@ -70,17 +71,14 @@ export function SessionTreePanel(props: SessionTreePanelProps) {
   return (
     <div className="tree-content panel-content">
       <div className="sidebar-actions">
-        <button className="icon-btn top-icon-btn" title="新建目录" onClick={onCreateFolder}>
-          <FolderPlus size={16} strokeWidth={1.8} />
-        </button>
-        <button className="icon-btn top-icon-btn" title="新建会话" onClick={onCreateSession}>
-          <TerminalSquare size={16} strokeWidth={1.8} />
-        </button>
+        <Tooltip title="新建目录"><Button type="text" size="small" icon={<FolderAddOutlined />} onClick={onCreateFolder} /></Tooltip>
+        <Tooltip title="新建会话"><Button type="text" size="small" icon={<PlusOutlined />} onClick={onCreateSession} /></Tooltip>
       </div>
       <div className="tree-scroll">
-        {renderSessionList(null)}
-        {renderFolderTree(null)}
+        {sessions.length === 0 && folders.length === 0
+          ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无会话" />
+          : <>{renderSessionList(null)}{renderFolderTree(null)}</>}
       </div>
     </div>
   );
-}
+};

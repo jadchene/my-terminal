@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import type { MutableRefObject } from 'react';
 import type { Settings } from '../types';
+import { getTerminalTheme } from '../utils/terminalTheme';
 import { normalizeTerminalDataInput } from '../utils/terminalInput';
 import { getTerminalSelectionText } from '../utils/terminalSelection';
 import { appendBoundedUtf8, materializeBoundedUtf8, type BoundedText } from '../utils/boundedText';
@@ -268,10 +269,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
         cursorStyle: localSettings.theme.terminalCursorStyle || 'block',
         cursorBlink: localSettings.theme.terminalCursorBlink ?? true,
         cursorWidth: Math.max(1, Math.min(8, Number(localSettings.theme.terminalCursorWidth || 2))),
-        theme: {
-          background: localSettings.theme.backgroundColor,
-          foreground: localSettings.theme.foregroundColor,
-        },
+        theme: getTerminalTheme(localSettings.theme.mode),
       });
       fit = new FitAddon();
       term.loadAddon(fit);
@@ -327,10 +325,7 @@ export function useTerminalRuntime(params: UseTerminalRuntimeParams) {
     term.options.cursorStyle = localSettings.theme.terminalCursorStyle || 'block';
     term.options.cursorBlink = localSettings.theme.terminalCursorBlink ?? true;
     term.options.cursorWidth = Math.max(1, Math.min(8, Number(localSettings.theme.terminalCursorWidth || 2)));
-    term.options.theme = {
-      background: localSettings.theme.backgroundColor,
-      foreground: localSettings.theme.foregroundColor,
-    };
+    term.options.theme = getTerminalTheme(localSettings.theme.mode);
 
     mountTerminal(terminalContainerRef.current, term);
     fitTerminalStabilized(sessionId);

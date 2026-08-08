@@ -8,6 +8,7 @@ import type {
   SftpTransferError,
   SftpTransferProgress,
 } from '../types';
+import type { ConnectionState } from '../types';
 
 type UseAppBootstrapParams = {
   activeSessionIdRef: MutableRefObject<number | null>;
@@ -38,6 +39,7 @@ type UseAppBootstrapParams = {
   updateTransferRow: (payload: SftpTransferProgress) => void;
   markTransferBatchComplete: (payload: SftpTransferBatchResult) => Promise<void> | void;
   markTransferError: (payload: SftpTransferError) => void;
+  setConnectionState: (tabId: number, state: ConnectionState | null) => void;
 };
 
 export function useAppBootstrap(params: UseAppBootstrapParams) {
@@ -65,6 +67,7 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     updateTransferRow,
     markTransferBatchComplete,
     markTransferError,
+    setConnectionState,
   } = params;
 
   const loadSessionData = useCallback(async () => {
@@ -150,6 +153,7 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     const unClosed = window.terminalApi.onSshClosed(({ sessionId }) => {
       disconnectedByTabRef.current.set(sessionId, true);
       reconnectingTabRef.current.delete(sessionId);
+      setConnectionState(sessionId, 'disconnected');
       const term = terminalMapRef.current.get(sessionId);
       term?.writeln('\r\n[连接已关闭，按 R 重连]');
     });
@@ -188,6 +192,7 @@ export function useAppBootstrap(params: UseAppBootstrapParams) {
     setMetrics,
     setMetricsBySession,
     setSettings,
+    setConnectionState,
     terminalMapRef,
   ]);
 

@@ -1,5 +1,6 @@
 export type Settings = {
   theme: {
+    mode: 'dark' | 'light';
     backgroundColor: string;
     foregroundColor: string;
     uiFontFamily: string;
@@ -25,6 +26,8 @@ export type Settings = {
     sidebarWidth: number;
   };
 };
+
+export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 
 export type Folder = {
   id: number;

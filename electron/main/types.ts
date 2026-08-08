@@ -9,6 +9,7 @@ import keytar from 'keytar';
 
 export type AppSettings = {
   theme: {
+    mode: 'dark' | 'light';
     backgroundColor: string;
     foregroundColor: string;
     uiFontFamily: string;

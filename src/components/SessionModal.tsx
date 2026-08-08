@@ -1,4 +1,5 @@
-import { Eye, EyeOff } from 'lucide-react';
+import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
+import { Button, Checkbox, Form, Input, InputNumber, Modal, Select } from 'antd';
 import type { ReactNode, RefObject } from 'react';
 import type { Session } from '../types';
 
@@ -12,6 +13,7 @@ type SessionModalProps = {
   folderMenuOpen: boolean;
   folderMenuRef: RefObject<HTMLDivElement | null>;
   getFolderLabel: (folderId: number | null) => string;
+  folderOptions: Array<{ label: string; value: number }>;
   renderFolderTreeOptions: (selectedId: number | null, onPick: (folderId: number | null) => void) => ReactNode[];
   onChangeForm: (next: SessionForm) => void;
   onTogglePassword: () => void;
@@ -21,7 +23,7 @@ type SessionModalProps = {
   onConfirm: () => Promise<void>;
 };
 
-export function SessionModal(props: SessionModalProps) {
+export const SessionModal = (props: SessionModalProps) => {
   const {
     show,
     editing,
@@ -30,6 +32,7 @@ export function SessionModal(props: SessionModalProps) {
     folderMenuOpen,
     folderMenuRef,
     getFolderLabel,
+    folderOptions,
     renderFolderTreeOptions,
     onChangeForm,
     onTogglePassword,
@@ -38,62 +41,62 @@ export function SessionModal(props: SessionModalProps) {
     onCancel,
     onConfirm,
   } = props;
-  if (!show) return null;
 
   return (
-    <div className="modal-mask">
-      <div className="modal-card">
-        <h3>{editing ? '编辑会话' : '新建会话'}</h3>
-        <label>
-          名称
-          <input value={form.name} onChange={(e) => onChangeForm({ ...form, name: e.target.value })} />
-        </label>
-        <label>
-          主机
-          <input value={form.host} onChange={(e) => onChangeForm({ ...form, host: e.target.value })} />
-        </label>
-        <label>
-          端口
-          <input type="number" value={form.port} onChange={(e) => onChangeForm({ ...form, port: Number(e.target.value) || 22 })} />
-        </label>
-        <label>
-          用户名
-          <input value={form.username} onChange={(e) => onChangeForm({ ...form, username: e.target.value })} />
-        </label>
-        <label>
-          密码
-          <div className="password-field">
-            <input type={!editing && showPassword ? 'text' : 'password'} value={form.password} onChange={(e) => onChangeForm({ ...form, password: e.target.value })} />
-            {!editing && (
-              <button type="button" className="password-toggle-btn" title={showPassword ? '隐藏密码' : '显示密码'} onClick={onTogglePassword}>
-                {showPassword ? <EyeOff size={14} strokeWidth={1.8} /> : <Eye size={14} strokeWidth={1.8} />}
-              </button>
-            )}
-          </div>
-        </label>
-        <label>
-          目录
-          <div className="select-like" ref={folderMenuRef}>
-            <button type="button" className="select-like-trigger" onClick={onToggleFolderMenu}>
-              <span>{getFolderLabel(form.folder_id)}</span>
-              <span aria-hidden="true">▾</span>
-            </button>
-            {folderMenuOpen && <div className="select-like-menu">{renderFolderTreeOptions(form.folder_id, onPickFolder)}</div>}
-          </div>
-        </label>
-        <label className="check-line">
-          <input type="checkbox" checked={form.remember_password === 1} onChange={(e) => onChangeForm({ ...form, remember_password: e.target.checked ? 1 : 0 })} />
-          默认记住密码
-        </label>
-        <label className="check-line">
-          <input type="checkbox" checked={form.default_session === 1} onChange={(e) => onChangeForm({ ...form, default_session: e.target.checked ? 1 : 0 })} />
-          默认会话
-        </label>
-        <div className="modal-actions">
-          <button onClick={onCancel}>取消</button>
-          <button onClick={() => void onConfirm()}>确认</button>
+    <Modal
+      open={show}
+      title={editing ? '编辑会话' : '新建会话'}
+      centered
+      mask={{ closable: false }}
+      onCancel={onCancel}
+      footer={[
+        <Button key="cancel" onClick={onCancel}>取消</Button>,
+        <Button key="confirm" type="primary" onClick={() => void onConfirm()}>确认</Button>,
+      ]}
+    >
+      <Form layout="vertical" colon={false} className="session-form">
+        <Form.Item label="名称" required>
+          <Input value={form.name} onChange={(event) => onChangeForm({ ...form, name: event.target.value })} />
+        </Form.Item>
+        <div className="form-grid-two">
+          <Form.Item label="主机" required>
+            <Input value={form.host} onChange={(event) => onChangeForm({ ...form, host: event.target.value })} />
+          </Form.Item>
+          <Form.Item label="端口">
+            <InputNumber min={1} max={65535} value={form.port} onChange={(value) => onChangeForm({ ...form, port: value ?? 22 })} />
+          </Form.Item>
         </div>
-      </div>
-    </div>
+        <Form.Item label="用户名" required>
+          <Input value={form.username} onChange={(event) => onChangeForm({ ...form, username: event.target.value })} />
+        </Form.Item>
+        <Form.Item label="密码">
+          <Input
+            type={!editing && showPassword ? 'text' : 'password'}
+            value={form.password}
+            onChange={(event) => onChangeForm({ ...form, password: event.target.value })}
+            suffix={!editing ? (
+              <Button type="text" size="small" icon={showPassword ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={onTogglePassword} />
+            ) : null}
+          />
+        </Form.Item>
+        <Form.Item label="目录">
+          <Select
+            className="folder-select"
+            open={folderMenuOpen}
+            value={form.folder_id ?? 0}
+            options={folderOptions}
+            onOpenChange={(open) => {
+              if (open !== folderMenuOpen) onToggleFolderMenu();
+            }}
+            onChange={(value) => onPickFolder(value === 0 ? null : value)}
+            optionRender={(option) => <span title={String(option.label)}>{option.label}</span>}
+          />
+        </Form.Item>
+        <div className="form-check-row">
+          <Checkbox checked={form.remember_password === 1} onChange={(event) => onChangeForm({ ...form, remember_password: event.target.checked ? 1 : 0 })}>记住密码</Checkbox>
+          <Checkbox checked={form.default_session === 1} onChange={(event) => onChangeForm({ ...form, default_session: event.target.checked ? 1 : 0 })}>默认会话</Checkbox>
+        </div>
+      </Form>
+    </Modal>
   );
-}
+};

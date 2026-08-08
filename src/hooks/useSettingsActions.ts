@@ -18,7 +18,6 @@ type UseSettingsActionsParams = {
   setShowSettings: Dispatch<SetStateAction<boolean>>;
   setSettingsTab: Dispatch<SetStateAction<'appearance' | 'behavior' | 'system'>>;
   setCursorStyleMenuOpen: Dispatch<SetStateAction<boolean>>;
-  setMenuOpen: Dispatch<SetStateAction<boolean>>;
   showAlert: (message: string, title?: string) => Promise<void>;
 };
 
@@ -32,7 +31,6 @@ export function useSettingsActions(params: UseSettingsActionsParams) {
     setShowSettings,
     setSettingsTab,
     setCursorStyleMenuOpen,
-    setMenuOpen,
     showAlert,
   } = params;
 
@@ -42,7 +40,6 @@ export function useSettingsActions(params: UseSettingsActionsParams) {
 
   const openSettingsModal = () => {
     if (!settings) return;
-    setMenuOpen(false);
     setSettingsDraft({
       ...settings,
       theme: { ...settings.theme },

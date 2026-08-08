@@ -1,4 +1,16 @@
-import { ArrowUp, Download, Eye, EyeOff, File as FileIcon, Folder as FolderIcon, FolderPlus, RefreshCw, TerminalSquare, Upload } from 'lucide-react';
+import {
+  ArrowUpOutlined,
+  DownloadOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined,
+  FileOutlined,
+  FolderAddOutlined,
+  FolderOutlined,
+  ReloadOutlined,
+  SyncOutlined,
+  UploadOutlined,
+} from '@ant-design/icons';
+import { Button, Checkbox, Empty, Input, Tooltip } from 'antd';
 import type { SftpItem } from '../types';
 import { TransferList } from './TransferList';
 
@@ -50,7 +62,7 @@ type SftpPanelProps = {
   onCancelTransfer: (row: TransferRow) => void;
 };
 
-export function SftpPanel(props: SftpPanelProps) {
+export const SftpPanel = (props: SftpPanelProps) => {
   const {
     activeSessionId,
     hasActiveSession,
@@ -84,104 +96,84 @@ export function SftpPanel(props: SftpPanelProps) {
     onCancelTransfer,
   } = props;
 
+  if (!activeSessionId) {
+    return <div className="panel-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无活动会话" /></div>;
+  }
+
+  const toolbarItems = [
+    { title: '上级目录', icon: <ArrowUpOutlined />, action: onGoParent },
+    { title: '跟随 SSH 当前目录', icon: <SyncOutlined />, action: onFollowCwd },
+    { title: '刷新', icon: <ReloadOutlined />, action: onRefresh },
+    { title: showHiddenFiles ? '隐藏文件' : '显示隐藏文件', icon: showHiddenFiles ? <EyeInvisibleOutlined /> : <EyeOutlined />, action: onToggleShowHidden },
+    { title: '新建目录', icon: <FolderAddOutlined />, action: onCreateDir, disabled: !hasActiveSession },
+    { title: '批量上传', icon: <UploadOutlined />, action: onBatchUpload, disabled: !hasActiveSession },
+    { title: '批量下载', icon: <DownloadOutlined />, action: onBatchDownload, disabled: !hasActiveSession || selectedSftpPaths.length === 0 },
+  ];
+
   return (
     <div
-      className={`sftp-sidebar-content panel-content ${activeSessionId ? '' : 'panel-empty-host'} ${dropOver ? 'drop-over' : ''}`}
+      className={`sftp-sidebar-content panel-content ${dropOver ? 'drop-over' : ''}`}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
-      onDrop={(e) => {
-        void onDrop(e);
-      }}
+      onDrop={(event) => void onDrop(event)}
     >
-      {activeSessionId ? (
-        <>
-          <div className="sidebar-actions">
-            <button className="icon-btn top-icon-btn" title={showHiddenFiles ? '隐藏文件' : '显示隐藏文件'} onClick={() => void onToggleShowHidden()}>
-              {showHiddenFiles ? <EyeOff size={16} strokeWidth={1.8} /> : <Eye size={16} strokeWidth={1.8} />}
-            </button>
-            <button className="icon-btn top-icon-btn" title="刷新" onClick={() => void onRefresh()}>
-              <RefreshCw size={16} strokeWidth={1.8} />
-            </button>
-            <button className="icon-btn top-icon-btn" title="上级目录" onClick={() => void onGoParent()}>
-              <ArrowUp size={16} strokeWidth={1.8} />
-            </button>
-            <button className="icon-btn top-icon-btn" title="跟随 SSH 当前目录" onClick={() => void onFollowCwd()}>
-              <TerminalSquare size={16} strokeWidth={1.8} />
-            </button>
-            <button className="icon-btn top-icon-btn" title="新建目录" disabled={!hasActiveSession} onClick={() => void onCreateDir()}>
-              <FolderPlus size={16} strokeWidth={1.8} />
-            </button>
-            <button className="icon-btn top-icon-btn" title="批量上传" disabled={!hasActiveSession} onClick={() => void onBatchUpload()}>
-              <Upload size={16} strokeWidth={1.8} />
-            </button>
-            <button
-              className="icon-btn top-icon-btn"
-              title="批量下载"
-              disabled={!hasActiveSession || selectedSftpPaths.length === 0}
-              onClick={() => void onBatchDownload()}
+      <div className="sidebar-actions sftp-toolbar">
+        {toolbarItems.map((item) => (
+          <Tooltip key={item.title} title={item.title}>
+            <Button type="text" size="small" icon={item.icon} disabled={item.disabled} onClick={() => void item.action()} />
+          </Tooltip>
+        ))}
+      </div>
+      <div className="path-bar">
+        <Input
+          size="small"
+          value={sftpPathInput}
+          onChange={(event) => onPathInputChange(event.target.value)}
+          onPressEnter={() => void onPathSubmit()}
+          onBlur={onPathBlur}
+          title="输入远程路径并按 Enter 跳转"
+        />
+      </div>
+      <div className="sftp-list" role="list">
+        {sftpItems.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="目录为空" />
+        ) : sftpItems.map((item) => {
+          const isDir = item.type === 'd';
+          const fullPath = `${sftpPath.replace(/\/$/, '')}/${item.name}`;
+          return (
+            <Tooltip
+              key={`${item.name}-${item.modifyTime}`}
+              title={<span className="sftp-meta-tooltip">{formatSftpMeta(item)}</span>}
+              placement="right"
+              mouseEnterDelay={0.45}
             >
-              <Download size={16} strokeWidth={1.8} />
-            </button>
-          </div>
-          <div className="path-bar">
-            <input
-              className="path-input"
-              value={sftpPathInput}
-              onChange={(e) => onPathInputChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter') return;
-                e.preventDefault();
-                void onPathSubmit();
-              }}
-              onBlur={onPathBlur}
-              title="输入远程路径并按 Enter 跳转"
-            />
-          </div>
-          <div className="sftp-list">
-            {sftpItems.map((item) => {
-              const isDir = item.type === 'd';
-              const fullPath = `${sftpPath.replace(/\/$/, '')}/${item.name}`;
-              return (
-                <div
-                  key={`${item.name}-${item.modifyTime}`}
-                  className="sftp-row"
-                  draggable
-                  title={formatSftpMeta(item)}
-                  onDragStart={(e) => onStartItemDrag(e, fullPath, item)}
-                  onDragEnd={onEndItemDrag}
-                  onContextMenu={(e) => onOpenItemMenu(e, { path: fullPath, name: item.name, isDir })}
-                >
-                  <input
-                    type="checkbox"
-                    className="sftp-select"
-                    checked={selectedSftpPaths.includes(fullPath)}
-                    onChange={(e) => onToggleItemSelect(fullPath, e.target.checked, (e.nativeEvent as MouseEvent).shiftKey)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                  <button
-                    className="link-btn tree-row-btn"
-                    onContextMenu={(e) => onOpenItemMenu(e, { path: fullPath, name: item.name, isDir })}
-                    onDoubleClick={() => {
-                      if (!isDir) return;
-                      const nextPath = `${sftpPath.replace(/\/$/, '')}/${item.name}`;
-                      void onOpenDir(nextPath);
-                    }}
-                  >
-                    <span className="sftp-item-icon" aria-hidden="true">
-                      {isDir ? <FolderIcon size={14} strokeWidth={1.8} /> : <FileIcon size={14} strokeWidth={1.8} />}
-                    </span>
-                    {item.name}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          <TransferList rows={transferRows} onCancel={onCancelTransfer} />
-        </>
-      ) : (
-        <div className="panel-empty">暂无活动会话</div>
-      )}
+              <div
+                className="sftp-row"
+                role="listitem"
+                draggable
+                onDragStart={(event) => onStartItemDrag(event, fullPath, item)}
+                onDragEnd={onEndItemDrag}
+                onContextMenu={(event) => onOpenItemMenu(event, { path: fullPath, name: item.name, isDir })}
+                onDoubleClick={() => {
+                  if (isDir) void onOpenDir(fullPath);
+                }}
+              >
+                <Checkbox
+                  checked={selectedSftpPaths.includes(fullPath)}
+                  onChange={(event) => onToggleItemSelect(fullPath, event.target.checked, event.nativeEvent.shiftKey)}
+                  onClick={(event) => event.stopPropagation()}
+                />
+                <span className={`sftp-item-icon ${isDir ? 'is-folder' : ''}`} aria-hidden="true">
+                  {isDir ? <FolderOutlined /> : <FileOutlined />}
+                </span>
+                <span className="sftp-item-name">{item.name}</span>
+              </div>
+            </Tooltip>
+          );
+        })}
+      </div>
+      <TransferList rows={transferRows} onCancel={onCancelTransfer} />
     </div>
   );
-}
+};
